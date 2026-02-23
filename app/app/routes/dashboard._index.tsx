@@ -186,6 +186,11 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
   const firstName = user.name?.split(' ')[0] || 'Friend';
   const [showContent, setShowContent] = useState(false);
   const [showSmsPrompt, setShowSmsPrompt] = useState(false);
+  const quickActionCount = (activePoll ? 1 : 0) + (nextEvent ? 1 : 0) + 3 + (isAdmin ? 1 : 0);
+  const quickActionsGridClass =
+    quickActionCount === 4
+      ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
+      : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4";
 
   // Show content expanded on first visit
   useEffect(() => {
@@ -501,7 +506,7 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
           <h2 className="text-xl font-display font-semibold text-foreground">Quick Actions</h2>
           <p className="text-sm text-muted-foreground">Jump into the workflows you use most.</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className={quickActionsGridClass}>
           {activePoll && (
             <Link to="/dashboard/polls">
               <Card hover className="card-glow p-6 h-full">
