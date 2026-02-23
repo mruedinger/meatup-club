@@ -4,7 +4,6 @@
  * Architecture: Restaurants are global and available in all polls.
  * Users can vote on any restaurant in any poll (unless explicitly excluded).
  */
-import type { D1Database } from "./db.server";
 
 export interface Restaurant {
   id: number;
@@ -35,7 +34,7 @@ export interface RestaurantWithVotes extends Restaurant {
  * Excludes any restaurants that have been hidden from the poll
  */
 export async function getRestaurantsForPoll(
-  db: D1Database,
+  db: any,
   pollId: number,
   userId?: number
 ): Promise<RestaurantWithVotes[]> {
@@ -66,7 +65,7 @@ export async function getRestaurantsForPoll(
  * Find a restaurant by Google Place ID
  */
 export async function findRestaurantByPlaceId(
-  db: D1Database,
+  db: any,
   placeId: string
 ): Promise<Restaurant | null> {
   return await db
@@ -79,7 +78,7 @@ export async function findRestaurantByPlaceId(
  * Find a restaurant by name (case-insensitive)
  */
 export async function findRestaurantByName(
-  db: D1Database,
+  db: any,
   name: string
 ): Promise<Restaurant | null> {
   return await db
@@ -92,7 +91,7 @@ export async function findRestaurantByName(
  * Create a new restaurant
  */
 export async function createRestaurant(
-  db: D1Database,
+  db: any,
   restaurant: {
     name: string;
     address?: string;
@@ -144,7 +143,7 @@ export async function createRestaurant(
  * Replaces any existing vote by this user in this poll
  */
 export async function voteForRestaurant(
-  db: D1Database,
+  db: any,
   pollId: number,
   restaurantId: number,
   userId: number
@@ -168,7 +167,7 @@ export async function voteForRestaurant(
  * Remove a user's vote from a poll
  */
 export async function removeVote(
-  db: D1Database,
+  db: any,
   pollId: number,
   userId: number
 ): Promise<void> {
@@ -182,7 +181,7 @@ export async function removeVote(
  * Get a user's current vote in a poll
  */
 export async function getUserVote(
-  db: D1Database,
+  db: any,
   pollId: number,
   userId: number
 ): Promise<{ restaurant_id: number } | null> {
@@ -199,7 +198,7 @@ export async function getUserVote(
  * This will cascade delete all votes for this restaurant
  */
 export async function deleteRestaurant(
-  db: D1Database,
+  db: any,
   restaurantId: number
 ): Promise<void> {
   await db

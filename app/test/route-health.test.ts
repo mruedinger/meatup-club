@@ -299,13 +299,13 @@ describe('Route Health - All Routes Should Load Without 404', () => {
     it('should ensure all route files are mounted in routes.ts', () => {
       const routesDir = join(__dirname, '../app/routes');
       const routeFiles = discoverRouteFiles(routesDir).map((file) =>
-        file.replace(/\\.tsx?$/, '')
+        file.replace(/\.tsx?$/, '')
       );
 
       const routeConfigPath = join(__dirname, '../app/routes.ts');
       const routeConfig = readFileSync(routeConfigPath, 'utf8');
       const mappedRouteFiles = Array.from(
-        routeConfig.matchAll(/\"routes\\/([^\\\"]+)\\.tsx\"/g),
+        routeConfig.matchAll(/"routes\/([^"]+)\.tsx"/g),
         (match) => match[1]
       );
 

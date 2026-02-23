@@ -3,7 +3,6 @@
  */
 
 import type { VoteLeader, DateLeader, VoteLeaders } from "./types";
-import type { D1Database } from "./db.server";
 
 /**
  * Fetches vote leaders for the active poll
@@ -14,7 +13,7 @@ import type { D1Database } from "./db.server";
  * @param db - D1 database instance
  * @returns Vote leaders for the active poll
  */
-export async function getActivePollLeaders(db: D1Database): Promise<VoteLeaders> {
+export async function getActivePollLeaders(db: any): Promise<VoteLeaders> {
   // Get active poll
   const activePoll = await db
     .prepare(`

@@ -24,7 +24,8 @@ export async function reserveWebhookDelivery(
       .bind(normalizedProvider, normalizedDeliveryId)
       .run();
 
-    return Number(result.meta?.changes || 0) > 0;
+    const changes = Number((result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 1);
+    return changes > 0;
   } catch (error) {
     const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
 

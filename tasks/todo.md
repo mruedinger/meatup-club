@@ -289,3 +289,37 @@ This plan focuses on extracting reusable patterns, eliminating duplication, and 
 4. **Phase 6 + 7 last** — Polish layer: error boundaries, loading states, documentation.
 
 Each phase should be a separate branch/PR for reviewability. Within each phase, work route-by-route to keep changes verifiable.
+
+# Full Modernization Sprint (2026-02-23)
+
+## Goal
+Implement all prioritized improvements from the critical architecture review: route wiring integrity, schema/bootstrap reliability, deploy quality gates, RBAC/secure webhook behavior, logging hygiene, route-level testing, and documentation alignment.
+
+## Acceptance Criteria
+- [ ] All intended runtime routes are explicitly mounted in `app/app/routes.ts` and validated by tests.
+- [ ] Inbound email RSVP webhook is reachable at `/api/webhooks/email-rsvp` in the manifest.
+- [ ] DB setup path is deterministic and documented without contradictory schema/migration guidance.
+- [ ] CI deploy workflow runs typecheck and tests before deploy.
+- [ ] Poll creation permissions match policy (admin-only) and are enforced server-side.
+- [ ] Webhook handlers use idempotency keys/replay guards to avoid duplicate side effects.
+- [ ] PII-heavy debug logs are removed/redacted from request handlers.
+- [ ] Route-health tests fail when route files are not mounted in route config.
+- [ ] Legacy/dead route TODOs/docs are reconciled with production behavior.
+- [ ] README docs (root + app) are aligned to current stack and operational flow.
+
+## Checklist
+- [ ] Restate goal + acceptance criteria
+- [ ] Locate existing implementation / patterns
+- [ ] Design: minimal approach + key decisions
+- [ ] Implement smallest safe slice (routing + CI + docs)
+- [ ] Implement security/integrity slice (RBAC + webhook idempotency + logging hygiene)
+- [ ] Implement architecture/testing slice (route manifest test + dead route cleanup)
+- [ ] Add/adjust tests
+- [ ] Run verification (lint/tests/build/manual repro)
+- [ ] Summarize changes + verification story
+- [ ] Record lessons (if any)
+
+## Working Notes
+- Use separate git worktrees/branches per slice and cherry-pick into `main`.
+- Keep untracked `.claude/settings.local.json` untouched.
+- Prefer minimal functional deltas over broad speculative refactors.

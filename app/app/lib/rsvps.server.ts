@@ -5,10 +5,9 @@
  * duplicated across dashboard.events, api.webhooks.sms, and
  * api.webhooks.email-rsvp.
  */
-import type { D1Database } from "./db.server";
 
 export interface UpsertRsvpParams {
-  db: D1Database;
+  db: any;
   eventId: number;
   userId: number;
   status: string;
