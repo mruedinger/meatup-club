@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { readdirSync } from 'fs';
+import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 /**
@@ -294,6 +294,26 @@ describe('Route Health - All Routes Should Load Without 404', () => {
         const hasHandler = route.loader || route.action;
         expect(hasHandler, `API route ${file} should have loader or action`).toBeTruthy();
       }
+    });
+
+    it('should ensure all route files are mounted in routes.ts', () => {
+      const routesDir = join(__dirname, '../app/routes');
+      const routeFiles = discoverRouteFiles(routesDir).map((file) =>
+        file.replace(/\\.tsx?$/, '')
+      );
+
+      const routeConfigPath = join(__dirname, '../app/routes.ts');
+      const routeConfig = readFileSync(routeConfigPath, 'utf8');
+      const mappedRouteFiles = Array.from(
+        routeConfig.matchAll(/\"routes\\/([^\\\"]+)\\.tsx\"/g),
+        (match) => match[1]
+      );
+
+      const missingFromManifest = routeFiles.filter((file) => !mappedRouteFiles.includes(file));
+      const staleManifestEntries = mappedRouteFiles.filter((file) => !routeFiles.includes(file));
+
+      expect(missingFromManifest, `Missing in routes.ts: ${missingFromManifest.join(', ')}`).toEqual([]);
+      expect(staleManifestEntries, `Stale routes.ts entries: ${staleManifestEntries.join(', ')}`).toEqual([]);
     });
   });
 });

@@ -1,7 +1,9 @@
 // D1 Database helpers for Cloudflare
 // In React Router/Remix on Cloudflare, the DB binding comes from context
 
-export type D1Database = any; // Cloudflare D1 type
+import type { D1Database as CloudflareD1Database } from "@cloudflare/workers-types";
+
+export type D1Database = CloudflareD1Database;
 
 // Helper function to ensure user exists in database
 export async function ensureUser(

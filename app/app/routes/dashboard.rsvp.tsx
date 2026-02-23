@@ -10,9 +10,7 @@ import type { Route } from "./+types/dashboard.rsvp";
  * Calendar invites sent before this change contain RSVP links pointing to /dashboard/rsvp.
  * This redirect ensures those links continue to work.
  *
- * TODO: Remove this file after 2026-01-02 (after the first event completes)
- * By then, all calendar RSVPs will have been recorded and users will be familiar
- * with the Events page. Future calendar invites will link directly to /dashboard/events.
+ * Keep this redirect in place for backward compatibility with historical calendar links.
  */
 export async function loader({ request }: Route.LoaderArgs) {
   return redirect('/dashboard/events');
