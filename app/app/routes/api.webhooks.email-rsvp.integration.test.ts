@@ -44,7 +44,7 @@ describe('Webhook Handler - Signature Verification', () => {
       prepare: vi.fn().mockReturnThis(),
       bind: vi.fn().mockReturnThis(),
       first: vi.fn(),
-      run: vi.fn(),
+      run: vi.fn().mockResolvedValue({ meta: { changes: 1 } }),
     };
 
     // Create mock environment
@@ -202,6 +202,41 @@ describe('Webhook Handler - Signature Verification', () => {
 
       expect(response.status).toBe(401);
       expect(data.error).toBe('Invalid signature');
+    });
+  });
+
+  describe('Security: Idempotency', () => {
+    it('should ignore duplicate deliveries by svix-id', async () => {
+      mockDb.run.mockResolvedValueOnce({ meta: { changes: 0 } });
+
+      const request = new Request('http://localhost/api/webhooks/email-rsvp', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'svix-id': 'msg_duplicate_123',
+          'svix-timestamp': '1234567890',
+          'svix-signature': 'v1,valid-signature',
+        },
+        body: JSON.stringify({
+          type: 'email.received',
+          data: {
+            from: 'user@example.com',
+            subject: 'Accepted',
+            text: 'UID:event-123@meatup.club PARTSTAT:ACCEPTED',
+          },
+        }),
+      });
+
+      const context = {
+        cloudflare: { env: mockEnv },
+      } as any;
+
+      const response = await action({ request, context } as any);
+      const data = (await response.json()) as any;
+
+      expect(response.status).toBe(200);
+      expect(data.message).toBe('Duplicate webhook ignored');
+      expect(mockDb.first).not.toHaveBeenCalled();
     });
   });
 

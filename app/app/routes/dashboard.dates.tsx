@@ -55,6 +55,29 @@ export async function action({ request, context }: { request: Request; context: 
   const formData = await request.formData();
   const action = formData.get('_action');
 
+  if (action === 'start_poll') {
+    if (user.is_admin !== 1) {
+      return { error: 'Only admins can create polls' };
+    }
+
+    const title = formData.get('title');
+    if (!title || !String(title).trim()) {
+      return { error: 'Poll title is required' };
+    }
+
+    await db
+      .prepare(`UPDATE polls SET status = 'closed', closed_by = ?, closed_at = CURRENT_TIMESTAMP WHERE status = 'active'`)
+      .bind(user.id)
+      .run();
+
+    await db
+      .prepare(`INSERT INTO polls (title, status, created_by) VALUES (?, 'active', ?)`)
+      .bind(String(title).trim(), user.id)
+      .run();
+
+    return redirect('/dashboard/dates');
+  }
+
   if (action === 'suggest') {
     const suggestedDate = formData.get('suggested_date');
 
@@ -202,17 +225,6 @@ export default function DatesPage({ loaderData, actionData }: { loaderData: any;
   const [selectedDate, setSelectedDate] = useState("");
   const submit = useSubmit();
 
-  function handleStartPoll(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    fetch('/api/polls', {
-      method: 'POST',
-      body: formData,
-    }).then(() => {
-      window.location.reload();
-    });
-  }
-
   function handleVote(suggestionId: number, currentlyVoted: boolean) {
     const formData = new FormData();
     formData.append('_action', 'vote');
@@ -283,12 +295,14 @@ export default function DatesPage({ loaderData, actionData }: { loaderData: any;
             >
               {showForm ? 'Cancel' : '+ Suggest Date'}
             </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setShowNewPollForm(!showNewPollForm)}
-            >
-              {showNewPollForm ? 'Cancel' : 'Start New Poll'}
-            </Button>
+            {currentUser.isAdmin && (
+              <Button
+                variant="secondary"
+                onClick={() => setShowNewPollForm(!showNewPollForm)}
+              >
+                {showNewPollForm ? 'Cancel' : 'Start New Poll'}
+              </Button>
+            )}
           </>
         }
       />
@@ -320,8 +334,8 @@ export default function DatesPage({ loaderData, actionData }: { loaderData: any;
       {showNewPollForm && (
         <Card className="p-6 mb-8">
           <h2 className="text-xl font-semibold mb-4">Start New Poll</h2>
-          <form onSubmit={handleStartPoll} className="space-y-4">
-            <input type="hidden" name="_action" value="create" />
+          <Form method="post" className="space-y-4">
+            <input type="hidden" name="_action" value="start_poll" />
             <div>
               <label htmlFor="poll_title" className="block text-sm font-medium text-muted-foreground mb-1">
                 Poll Title *
@@ -352,7 +366,7 @@ export default function DatesPage({ loaderData, actionData }: { loaderData: any;
                 Cancel
               </Button>
             </div>
-          </form>
+          </Form>
         </Card>
       )}
 

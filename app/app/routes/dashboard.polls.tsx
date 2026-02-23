@@ -453,14 +453,6 @@ export async function action({ request, context }: Route.ActionArgs) {
         .bind(Number(parentId))
         .first();
 
-      console.log('Parent comment found:', {
-        id: parentComment?.id,
-        user_id: parentComment?.user_id,
-        email: parentComment?.email,
-        notify_enabled: parentComment?.notify_comment_replies,
-        is_self_reply: parentComment?.user_id === user.id,
-      });
-
       // Send email if parent author wants notifications and isn't replying to themselves
       if (
         parentComment &&
@@ -471,8 +463,6 @@ export async function action({ request, context }: Route.ActionArgs) {
         const url = new URL(request.url);
         const pollUrl = `${url.origin}/dashboard/polls`;
 
-        console.log('Sending comment reply email to:', parentComment.email);
-
         // Use waitUntil to handle async work properly in Cloudflare Workers
         const emailPromise = sendCommentReplyEmail({
           to: parentComment.email as string,
@@ -482,9 +472,6 @@ export async function action({ request, context }: Route.ActionArgs) {
           replyContent: content.trim(),
           pollUrl,
           resendApiKey: resendApiKey || "",
-        }).then(result => {
-          console.log('Email send result:', result);
-          return result;
         }).catch(err => {
           console.error('Failed to send comment reply email:', err);
           throw err;
@@ -496,12 +483,6 @@ export async function action({ request, context }: Route.ActionArgs) {
         } else {
           await emailPromise;
         }
-      } else {
-        console.log('Skipping email notification:', {
-          hasParentComment: !!parentComment,
-          notifyEnabled: parentComment?.notify_comment_replies === 1,
-          isSelfReply: parentComment?.user_id === user.id,
-        });
       }
     }
 

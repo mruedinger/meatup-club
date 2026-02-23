@@ -7,6 +7,7 @@ import {
 } from "../lib/sms.server";
 import { getAppTimeZone, getTodayDateStringInTimeZone } from "../lib/dateUtils";
 import { upsertRsvp } from "../lib/rsvps.server";
+import { reserveWebhookDelivery } from "../lib/webhook-idempotency.server";
 
 export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env;
@@ -30,6 +31,14 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   if (!isValid) {
     return new Response("Invalid signature", { status: 403 });
+  }
+
+  const messageSid = formData.get("MessageSid")?.toString().trim();
+  if (messageSid) {
+    const isFirstDelivery = await reserveWebhookDelivery(db, "twilio", messageSid);
+    if (!isFirstDelivery) {
+      return buildSmsResponse("Thanks! We already received that response.");
+    }
   }
 
   const fromRaw = formData.get("From")?.toString() || "";

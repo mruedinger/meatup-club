@@ -1,6 +1,7 @@
 import type { AppLoadContext } from "react-router";
 import { Webhook } from "svix";
 import { upsertRsvp } from "../lib/rsvps.server";
+import { reserveWebhookDelivery } from "../lib/webhook-idempotency.server";
 
 /**
  * Webhook handler for inbound emails from Resend
@@ -53,15 +54,16 @@ export async function action({ request, context }: { request: Request; context: 
       );
     }
 
-    console.log('Received email webhook:', {
-      type: payload.type,
-      from: payload.from,
-      subject: payload.subject,
-    });
+    console.log('Received email webhook', { type: payload.type });
 
     // Only process email.received events
     if (payload.type !== 'email.received') {
       return Response.json({ message: 'Ignored: not an email.received event' });
+    }
+
+    const isFirstDelivery = await reserveWebhookDelivery(db, 'resend', svixId);
+    if (!isFirstDelivery) {
+      return Response.json({ message: 'Duplicate webhook ignored' });
     }
 
     const { from, subject, text, html } = payload.data;
@@ -70,11 +72,8 @@ export async function action({ request, context }: { request: Request; context: 
     const rsvpData = parseCalendarRSVP({ subject, text, html });
 
     if (!rsvpData) {
-      console.log('No calendar RSVP data found in email');
       return Response.json({ message: 'No RSVP data found' });
     }
-
-    console.log('Parsed RSVP data:', rsvpData);
 
     // Extract email address from "Name <email@domain.com>" format
     const emailMatch = from.match(/<([^>]+)>/) || [null, from];
@@ -87,7 +86,6 @@ export async function action({ request, context }: { request: Request; context: 
       .first();
 
     if (!user) {
-      console.log(`User not found for email: ${userEmail}`);
       return Response.json({
         message: 'User not found',
         email: userEmail
@@ -126,7 +124,6 @@ export async function action({ request, context }: { request: Request; context: 
     }
 
     if (!event) {
-      console.log(`Event not found: ${eventId}`);
       return Response.json({
         message: 'Event not found',
         eventId: originalEventId
@@ -150,7 +147,11 @@ export async function action({ request, context }: { request: Request; context: 
       status: rsvpStatus,
       updatedViaCalendar: true,
     });
-    console.log(`${result === 'created' ? 'Created' : 'Updated'} RSVP for user ${user.email} as "${rsvpStatus}"`);
+    console.log(`${result === 'created' ? 'Created' : 'Updated'} RSVP from email webhook`, {
+      eventId,
+      userId: user.id,
+      status: rsvpStatus,
+    });
 
     return Response.json({
       success: true,

@@ -25,6 +25,10 @@ export async function action({ request, context }: Route.ActionArgs) {
   const action = formData.get('_action');
 
   if (action === 'create') {
+    if (!user.is_admin) {
+      return Response.json({ error: 'Only admins can create polls' }, { status: 403 });
+    }
+
     const title = formData.get('title');
 
     if (!title) {
