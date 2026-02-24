@@ -114,4 +114,31 @@ describe("dashboard.admin.polls close action", () => {
     expect(statements).toContain("BEGIN TRANSACTION");
     expect(statements).toContain("COMMIT");
   });
+
+  it("creates a new poll for admins", async () => {
+    const db = createMockDb({});
+    const formData = new FormData();
+    formData.set("_action", "create");
+    formData.set("title", "Q3 2026 Meetup Poll");
+
+    const response = await action({
+      request: new Request("http://localhost/dashboard/admin/polls", {
+        method: "POST",
+        body: formData,
+      }),
+      context: { cloudflare: { env: { DB: db }, ctx: { waitUntil: vi.fn() } } } as any,
+    } as any);
+
+    expect(response).toBeInstanceOf(Response);
+    expect((response as Response).status).toBe(302);
+    expect((response as Response).headers.get("Location")).toBe("/dashboard/admin/polls");
+
+    const statements = db.prepare.mock.calls.map((call: unknown[]) => call[0] as string);
+    expect(statements).toContain(
+      "UPDATE polls SET status = 'closed', closed_by = ?, closed_at = CURRENT_TIMESTAMP WHERE status = 'active'"
+    );
+    expect(statements).toContain(
+      "INSERT INTO polls (title, status, created_by) VALUES (?, 'active', ?)"
+    );
+  });
 });

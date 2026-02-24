@@ -23,6 +23,53 @@ import {
   CheckIcon,
 } from "@heroicons/react/24/outline";
 
+interface SiteContentItem {
+  id: number;
+  key: string;
+  title: string;
+  content: string;
+}
+
+interface CountRow {
+  count: number;
+}
+
+interface ActivePollRow {
+  id: number;
+  title: string;
+  created_at: string;
+}
+
+interface MaxVotesRow {
+  max_votes: number | null;
+}
+
+interface TopRestaurantRow {
+  name: string;
+  vote_count: number;
+}
+
+interface TopDateRow {
+  suggested_date: string;
+  vote_count: number;
+}
+
+interface UserRestaurantVoteRow {
+  name: string;
+}
+
+interface EventRow {
+  id: number;
+  restaurant_name: string;
+  event_date: string;
+  event_time: string | null;
+  status: string;
+}
+
+interface UserRsvpRow {
+  status: "yes" | "no" | "maybe";
+}
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = await requireActiveUser(request, context);
   const db = context.cloudflare.env.DB;
@@ -36,8 +83,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const memberCountResult = await db
     .prepare('SELECT COUNT(*) as count FROM users WHERE status = ?')
     .bind('active')
-    .first();
-  const memberCount = (memberCountResult as any)?.count || 0;
+    .first() as CountRow | null;
+  const memberCount = memberCountResult?.count || 0;
 
   const isAdmin = user.is_admin === 1;
 
@@ -45,11 +92,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const activePoll = await db
     .prepare('SELECT * FROM polls WHERE status = ? ORDER BY created_at DESC LIMIT 1')
     .bind('active')
-    .first();
+    .first() as ActivePollRow | null;
 
   // Get top restaurant(s) for active poll and user's vote
-  let topRestaurants: any[] = [];
-  let userRestaurantVote = null;
+  let topRestaurants: TopRestaurantRow[] = [];
+  let userRestaurantVote: UserRestaurantVoteRow | null = null;
   if (activePoll) {
     // First get the max vote count
     const maxVoteResult = await db
@@ -64,10 +111,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           GROUP BY r.id
         )
       `)
-      .bind((activePoll as any).id, (activePoll as any).id)
-      .first();
+      .bind(activePoll.id, activePoll.id)
+      .first() as MaxVotesRow | null;
 
-    const maxVotes = (maxVoteResult as any)?.max_votes || 0;
+    const maxVotes = maxVoteResult?.max_votes || 0;
 
     // Get all restaurants with the max vote count
     if (maxVotes > 0) {
@@ -82,9 +129,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           HAVING vote_count = ?
           ORDER BY r.name ASC
         `)
-        .bind((activePoll as any).id, (activePoll as any).id, maxVotes)
+        .bind(activePoll.id, activePoll.id, maxVotes)
         .all();
-      topRestaurants = topRestaurantsResult.results || [];
+      topRestaurants = (topRestaurantsResult.results || []) as unknown as TopRestaurantRow[];
     }
 
     // Get user's restaurant vote for this poll
@@ -95,12 +142,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         JOIN restaurants r ON rv.restaurant_id = r.id
         WHERE rv.poll_id = ? AND rv.user_id = ?
       `)
-      .bind((activePoll as any).id, user.id)
-      .first();
+      .bind(activePoll.id, user.id)
+      .first() as UserRestaurantVoteRow | null;
   }
 
   // Get top date(s) for active poll and user's vote count
-  let topDates: any[] = [];
+  let topDates: TopDateRow[] = [];
   let userDateVoteCount = 0;
   if (activePoll) {
     // First get the max vote count
@@ -114,10 +161,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           GROUP BY ds.id
         )
       `)
-      .bind((activePoll as any).id)
-      .first();
+      .bind(activePoll.id)
+      .first() as MaxVotesRow | null;
 
-    const maxDateVotes = (maxDateVoteResult as any)?.max_votes || 0;
+    const maxDateVotes = maxDateVoteResult?.max_votes || 0;
 
     // Get all dates with the max vote count
     if (maxDateVotes > 0) {
@@ -130,9 +177,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           HAVING vote_count = ?
           ORDER BY ds.suggested_date ASC
         `)
-        .bind((activePoll as any).id, maxDateVotes)
+        .bind(activePoll.id, maxDateVotes)
         .all();
-      topDates = topDatesResult.results || [];
+      topDates = (topDatesResult.results || []) as unknown as TopDateRow[];
     }
 
     // Get count of user's date votes for this poll
@@ -142,9 +189,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         FROM date_votes
         WHERE poll_id = ? AND user_id = ?
       `)
-      .bind((activePoll as any).id, user.id)
-      .first();
-    userDateVoteCount = (userDateVoteResult as any)?.count || 0;
+      .bind(activePoll.id, user.id)
+      .first() as CountRow | null;
+    userDateVoteCount = userDateVoteResult?.count || 0;
   }
 
   // Get next upcoming event (ignore cancelled, filter by datetime in app timezone)
@@ -153,17 +200,18 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .bind('cancelled')
     .all();
   const appTimeZone = getAppTimeZone(context.cloudflare.env.APP_TIMEZONE);
-  const nextEvent = (eventsForNext.results || []).find((event: any) =>
+  const eventRows = (eventsForNext.results || []) as unknown as EventRow[];
+  const nextEvent = eventRows.find((event) =>
     !isEventInPastInTimeZone(event.event_date, event.event_time || '18:00', appTimeZone)
   ) || null;
 
   // Get user's RSVP for the next event
-  let userRsvp = null;
+  let userRsvp: UserRsvpRow | null = null;
   if (nextEvent) {
     userRsvp = await db
       .prepare('SELECT status FROM rsvps WHERE event_id = ? AND user_id = ?')
-      .bind((nextEvent as any).id, user.id)
-      .first();
+      .bind(nextEvent.id, user.id)
+      .first() as UserRsvpRow | null;
   }
 
   return {
@@ -175,7 +223,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     topDates,
     nextEvent,
     userRsvp,
-    content: contentResult.results || [],
+    content: (contentResult.results || []) as unknown as SiteContentItem[],
     userRestaurantVote,
     userDateVoteCount
   };
@@ -290,7 +338,7 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
 
           {showContent && (
             <div className="space-y-4 mt-8 pt-6 border-t border-border/30">
-              {content.map((item: any) => (
+              {content.map((item) => (
                 <Card key={item.id} className="p-5 bg-muted/30">
                   <h3 className="text-base font-semibold text-foreground mb-3 flex items-center gap-3">
                     <span className="w-5 h-5 text-accent">
@@ -337,10 +385,14 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
                 <span className="icon-container-lg"><ClipboardDocumentCheckIcon className="w-6 h-6" /></span>
                 <div>
                   <h3 className="text-xl font-display font-semibold text-foreground">
-                    {(activePoll as any).title}
+                    {activePoll.title}
                   </h3>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Active poll • Started {new Date((activePoll as any).created_at).toLocaleDateString()}
+                    Active poll • Started {formatDateForDisplay(activePoll.created_at, {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                    })}
                   </p>
                 </div>
               </div>
@@ -357,7 +409,7 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
                   <>
                     <p className="font-semibold text-foreground flex items-center gap-2">
                       <CheckIcon className="w-4 h-4 text-accent" />
-                      You voted: {(userRestaurantVote as any).name}
+                      You voted: {userRestaurantVote.name}
                     </p>
                     {topRestaurants.length > 0 && (
                       <p className="text-sm text-muted-foreground mt-2">
@@ -432,14 +484,25 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
           className="mb-8 p-6 sm:p-8 dashboard-section border-border/30"
           style={{ '--section-delay': '120ms' } as CSSProperties}
         >
-          <div className="flex items-center gap-4">
-            <span className="icon-container-lg bg-muted"><ClipboardDocumentListIcon className="w-6 h-6" /></span>
-            <div>
-              <h3 className="text-xl font-display font-semibold text-foreground">No Active Poll</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Start a new poll to begin voting on the next meetup location and date.
-              </p>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <span className="icon-container-lg bg-muted"><ClipboardDocumentListIcon className="w-6 h-6" /></span>
+              <div>
+                <h3 className="text-xl font-display font-semibold text-foreground">No Active Poll</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {isAdmin
+                    ? "Start a new poll to begin voting on the next meetup location and date."
+                    : "An admin needs to start the next poll before voting can resume."}
+                </p>
+              </div>
             </div>
+            {isAdmin && (
+              <div className="flex gap-2">
+                <Link to="/dashboard/admin/polls" className="btn-primary">
+                  Start New Poll
+                </Link>
+              </div>
+            )}
           </div>
         </Card>
       )}
@@ -457,18 +520,18 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Restaurant</p>
-              <p className="text-lg font-semibold text-foreground">{(nextEvent as any).restaurant_name}</p>
+              <p className="text-lg font-semibold text-foreground">{nextEvent.restaurant_name}</p>
             </div>
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Date & Time</p>
               <p className="text-lg font-semibold text-foreground">
-                {formatDateForDisplay((nextEvent as any).event_date, {
+                {formatDateForDisplay(nextEvent.event_date, {
                   weekday: 'short',
                   month: 'short',
                   day: 'numeric',
                 })}{' '}
                 <span className="text-muted-foreground font-normal">at</span>{' '}
-                {formatTimeForDisplay((nextEvent as any).event_time || '18:00')}
+                {formatTimeForDisplay(nextEvent.event_time || '18:00')}
               </p>
             </div>
             <div className="space-y-1">
@@ -476,13 +539,13 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
               <div className="flex items-center gap-2">
                 {userRsvp ? (
                   <>
-                    {(userRsvp as any).status === 'yes' && (
+                    {userRsvp.status === 'yes' && (
                       <Badge variant="success">Going</Badge>
                     )}
-                    {(userRsvp as any).status === 'no' && (
+                    {userRsvp.status === 'no' && (
                       <Badge variant="danger">Not Going</Badge>
                     )}
-                    {(userRsvp as any).status === 'maybe' && (
+                    {userRsvp.status === 'maybe' && (
                       <Badge variant="warning">Maybe</Badge>
                     )}
                   </>
@@ -625,6 +688,24 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
           </div>
         </Card>
       </div>
+    </main>
+  );
+}
+
+export function HydrateFallback() {
+  return (
+    <main className="dashboard-preview max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      <div className="mb-8 card-shell p-8 animate-pulse">
+        <div className="h-4 w-40 bg-muted rounded mb-4" />
+        <div className="h-10 w-64 bg-muted rounded mb-3" />
+        <div className="h-5 w-80 bg-muted rounded" />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <div className="card-shell p-6 h-36 animate-pulse bg-muted/40" />
+        <div className="card-shell p-6 h-36 animate-pulse bg-muted/40" />
+        <div className="card-shell p-6 h-36 animate-pulse bg-muted/40" />
+      </div>
+      <div className="card-shell p-8 h-56 animate-pulse bg-muted/30" />
     </main>
   );
 }

@@ -5,7 +5,19 @@ import { useState } from "react";
 import { requireActiveUser } from "../lib/auth.server";
 import { DateCalendar } from "../components/DateCalendar";
 import { PageHeader, Button, Alert, Badge, Card, EmptyState } from "../components/ui";
-import { ClipboardDocumentCheckIcon, ExclamationTriangleIcon, CalendarDaysIcon, CheckIcon } from "@heroicons/react/24/outline";
+import { CalendarDaysIcon } from "@heroicons/react/24/outline";
+import { confirmAction } from "../lib/confirm.client";
+
+interface DateSuggestionRow {
+  id: number;
+  user_id: number;
+  poll_id: number;
+  suggested_date: string;
+  suggested_by_name: string | null;
+  suggested_by_email: string;
+  vote_count: number;
+  user_has_voted: number;
+}
 
 export async function loader({ request, context }: { request: Request; context: AppLoadContext }) {
   const user = await requireActiveUser(request, context);
@@ -39,8 +51,10 @@ export async function loader({ request, context }: { request: Request; context: 
     .bind(activePoll?.id || -1, user.id, activePoll?.id || -1, activePoll?.id || -1)
     .all();
 
+  const suggestions = (suggestionsResult.results || []) as unknown as DateSuggestionRow[];
+
   return {
-    suggestions: suggestionsResult.results || [],
+    suggestions,
     activePoll: activePoll || null,
     currentUser: {
       id: user.id,
@@ -54,29 +68,6 @@ export async function action({ request, context }: { request: Request; context: 
   const db = context.cloudflare.env.DB;
   const formData = await request.formData();
   const action = formData.get('_action');
-
-  if (action === 'start_poll') {
-    if (user.is_admin !== 1) {
-      return { error: 'Only admins can create polls' };
-    }
-
-    const title = formData.get('title');
-    if (!title || !String(title).trim()) {
-      return { error: 'Poll title is required' };
-    }
-
-    await db
-      .prepare(`UPDATE polls SET status = 'closed', closed_by = ?, closed_at = CURRENT_TIMESTAMP WHERE status = 'active'`)
-      .bind(user.id)
-      .run();
-
-    await db
-      .prepare(`INSERT INTO polls (title, status, created_by) VALUES (?, 'active', ?)`)
-      .bind(String(title).trim(), user.id)
-      .run();
-
-    return redirect('/dashboard/dates');
-  }
 
   if (action === 'suggest') {
     const suggestedDate = formData.get('suggested_date');
@@ -221,7 +212,6 @@ export async function action({ request, context }: { request: Request; context: 
 export default function DatesPage({ loaderData, actionData }: { loaderData: any; actionData: any }) {
   const { suggestions, activePoll, currentUser } = loaderData;
   const [showForm, setShowForm] = useState(false);
-  const [showNewPollForm, setShowNewPollForm] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
   const submit = useSubmit();
 
@@ -234,12 +224,14 @@ export default function DatesPage({ loaderData, actionData }: { loaderData: any;
   }
 
   function handleDelete(suggestionId: number, dateStr: string) {
-    if (confirm(`Are you sure you want to delete the date suggestion "${dateStr}"? This action cannot be undone.`)) {
-      const formData = new FormData();
-      formData.append('_action', 'delete');
-      formData.append('suggestion_id', suggestionId.toString());
-      submit(formData, { method: 'post' });
+    if (!confirmAction(`Are you sure you want to delete the date suggestion "${dateStr}"? This action cannot be undone.`)) {
+      return;
     }
+
+    const formData = new FormData();
+    formData.append('_action', 'delete');
+    formData.append('suggestion_id', suggestionId.toString());
+    submit(formData, { method: 'post' });
   }
 
   function handleDateClick(dateStr: string) {
@@ -286,24 +278,14 @@ export default function DatesPage({ loaderData, actionData }: { loaderData: any;
       <PageHeader
         title="Date Voting"
         actions={
-          <>
-            <Button
-              variant="primary"
-              onClick={() => setShowForm(!showForm)}
-              disabled={!activePoll}
-              title={!activePoll ? 'Start a poll to suggest dates' : ''}
-            >
-              {showForm ? 'Cancel' : '+ Suggest Date'}
-            </Button>
-            {currentUser.isAdmin && (
-              <Button
-                variant="secondary"
-                onClick={() => setShowNewPollForm(!showNewPollForm)}
-              >
-                {showNewPollForm ? 'Cancel' : 'Start New Poll'}
-              </Button>
-            )}
-          </>
+          <Button
+            variant="primary"
+            onClick={() => setShowForm(!showForm)}
+            disabled={!activePoll}
+            title={!activePoll ? 'An admin must start a poll first' : ''}
+          >
+            {showForm ? 'Cancel' : '+ Suggest Date'}
+          </Button>
         }
       />
 
@@ -325,49 +307,11 @@ export default function DatesPage({ loaderData, actionData }: { loaderData: any;
       ) : (
         <Alert variant="warning" className="mb-6">
           <p className="font-medium">
-            No active poll. Start a new poll to begin voting on dates.
+            {currentUser.isAdmin
+              ? 'No active poll. Start one from Admin Polls to begin voting on dates.'
+              : 'No active poll. An admin must start one before voting can begin.'}
           </p>
         </Alert>
-      )}
-
-      {/* Start New Poll Form */}
-      {showNewPollForm && (
-        <Card className="p-6 mb-8">
-          <h2 className="text-xl font-semibold mb-4">Start New Poll</h2>
-          <Form method="post" className="space-y-4">
-            <input type="hidden" name="_action" value="start_poll" />
-            <div>
-              <label htmlFor="poll_title" className="block text-sm font-medium text-muted-foreground mb-1">
-                Poll Title *
-              </label>
-              <input
-                id="poll_title"
-                name="title"
-                type="text"
-                required
-                placeholder="e.g., Q1 2025 Meetup Poll"
-                className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-            </div>
-            {activePoll && (
-              <Alert variant="warning">
-                Starting a new poll will close the current active poll "{activePoll.title}".
-              </Alert>
-            )}
-            <div className="flex gap-2">
-              <Button type="submit" variant="secondary">
-                Start Poll
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setShowNewPollForm(false)}
-              >
-                Cancel
-              </Button>
-            </div>
-          </Form>
-        </Card>
       )}
 
       {actionData?.error && (
@@ -429,7 +373,7 @@ export default function DatesPage({ loaderData, actionData }: { loaderData: any;
         {/* Calendar - Takes 1 column */}
         <div className="lg:col-span-1">
           <DateCalendar
-            suggestions={suggestions as any}
+            suggestions={suggestions}
             activePollId={activePoll?.id || null}
             currentUserId={currentUser.id}
             onDateClick={handleDateClick}

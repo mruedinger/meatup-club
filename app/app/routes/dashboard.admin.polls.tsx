@@ -5,7 +5,7 @@ import { redirect } from "react-router";
 import VoteLeadersCard from "../components/VoteLeadersCard";
 import { getActivePollLeaders } from "../lib/polls.server";
 import { formatDateForDisplay, formatDateTimeForDisplay, getAppTimeZone, isDateInPastInTimeZone } from "../lib/dateUtils";
-import { Alert, Badge, Button, Card, EmptyState, PageHeader } from "../components/ui";
+import { Alert, Badge, Button, Card, PageHeader } from "../components/ui";
 import { ClipboardDocumentCheckIcon } from "@heroicons/react/24/outline";
 import { AdminLayout } from "../components/AdminLayout";
 
@@ -101,6 +101,36 @@ export async function action({ request, context }: Route.ActionArgs) {
   const db = context.cloudflare.env.DB;
   const formData = await request.formData();
   const action = formData.get('_action');
+
+  if (action === 'create') {
+    const title = String(formData.get('title') || '').trim();
+
+    if (!title) {
+      return { error: 'Poll title is required' };
+    }
+
+    if (title.length > 120) {
+      return { error: 'Poll title must be 120 characters or fewer' };
+    }
+
+    try {
+      await db
+        .prepare(`UPDATE polls SET status = 'closed', closed_by = ?, closed_at = CURRENT_TIMESTAMP WHERE status = 'active'`)
+        .bind(user.id)
+        .run();
+
+      await db
+        .prepare(`INSERT INTO polls (title, status, created_by) VALUES (?, 'active', ?)`)
+        .bind(title, user.id)
+        .run();
+
+      return redirect('/dashboard/admin/polls');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Poll creation error', { message });
+      return { error: 'Failed to create poll' };
+    }
+  }
 
   if (action === 'close') {
     const pollId = formData.get('poll_id');
@@ -466,10 +496,37 @@ export default function AdminPollsPage({ loaderData, actionData }: Route.Compone
           )}
         </Card>
       ) : (
-        <EmptyState
-          title="No active poll"
-          description="Users can start a new poll from the restaurant or date voting pages."
-        />
+        <Card className="p-6 mb-8">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="icon-container"><ClipboardDocumentCheckIcon className="w-5 h-5" /></span>
+            <h2 className="text-xl font-semibold text-foreground">Start New Poll</h2>
+          </div>
+          <p className="text-sm text-muted-foreground mb-6">
+            Create an active poll so members can vote on restaurants and dates.
+          </p>
+          <Form method="post" className="space-y-4">
+            <input type="hidden" name="_action" value="create" />
+            <div>
+              <label htmlFor="new_poll_title" className="block text-sm font-medium text-foreground mb-2">
+                Poll Title
+              </label>
+              <input
+                id="new_poll_title"
+                name="title"
+                type="text"
+                required
+                maxLength={120}
+                placeholder="e.g., Q2 2026 Meetup Poll"
+                className="w-full px-4 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent bg-card text-foreground"
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button type="submit">
+                Create Poll
+              </Button>
+            </div>
+          </Form>
+        </Card>
       )}
 
       {/* Closed Polls History */}
