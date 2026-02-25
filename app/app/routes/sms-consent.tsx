@@ -1,0 +1,70 @@
+import { Link } from "react-router";
+
+export default function SmsConsentPage() {
+  return (
+    <main className="min-h-screen bg-background px-6 py-12 sm:px-10 lg:px-16">
+      <div className="mx-auto max-w-3xl">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">
+          Meatup.Club
+        </p>
+        <h1 className="mt-3 text-4xl font-bold tracking-tight text-foreground">
+          SMS Consent & Opt-In
+        </h1>
+        <p className="mt-3 text-sm text-muted-foreground">Last updated: February 25, 2026</p>
+
+        <div className="mt-10 space-y-8 text-muted-foreground">
+          <section>
+            <h2 className="text-xl font-semibold text-foreground">How Users Opt In</h2>
+            <ol className="mt-3 list-decimal space-y-2 pl-6">
+              <li>Sign in to Meatup.Club.</li>
+              <li>Go to Profile settings.</li>
+              <li>Enter a valid mobile number.</li>
+              <li>
+                Check the SMS consent box that states:{" "}
+                <span className="font-medium text-foreground">
+                  "I agree to receive SMS reminders from Meatup.Club. Message frequency varies. Msg
+                  & data rates may apply. Reply STOP to opt out, HELP for help."
+                </span>
+              </li>
+              <li>Save preferences to enroll in SMS reminders.</li>
+            </ol>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold text-foreground">Program Details</h2>
+            <ul className="mt-3 list-disc space-y-2 pl-6">
+              <li>Purpose: event reminders and RSVP status updates only.</li>
+              <li>Frequency: varies by event, typically low volume.</li>
+              <li>Opt-out: reply STOP at any time.</li>
+              <li>Help: reply HELP for instructions.</li>
+              <li>Fees: message and data rates may apply.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold text-foreground">Contact</h2>
+            <p className="mt-3">
+              Questions about SMS consent can be sent to{" "}
+              <a
+                href="mailto:support@meatup.club"
+                className="font-medium text-accent underline underline-offset-2"
+              >
+                support@meatup.club
+              </a>
+              .
+            </p>
+          </section>
+        </div>
+
+        <div className="mt-12 border-t border-border pt-6 flex items-center gap-4 text-sm">
+          <Link to="/privacy" className="font-medium text-accent hover:text-accent-strong">
+            Privacy
+          </Link>
+          <Link to="/terms" className="font-medium text-accent hover:text-accent-strong">
+            Terms
+          </Link>
+        </div>
+      </div>
+    </main>
+  );
+}

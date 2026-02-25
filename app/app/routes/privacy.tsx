@@ -74,20 +74,28 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-semibold text-foreground">Proof of Consumer Consent</h2>
             <p className="mt-3">
-              Consumers provide SMS consent directly within the authenticated profile settings page
-              at{" "}
+              Consumers provide SMS consent directly within the authenticated profile settings page.
+              Public documentation of the opt-in flow and exact consent language is available at{" "}
               <a
-                href="https://meatup.club/dashboard/profile"
+                href="https://meatup.club/sms-consent"
                 className="font-medium text-accent underline underline-offset-2"
               >
-                https://meatup.club/dashboard/profile
+                https://meatup.club/sms-consent
+              </a>
+              {" "}and these terms at{" "}
+              <a
+                href="https://meatup.club/terms"
+                className="font-medium text-accent underline underline-offset-2"
+              >
+                https://meatup.club/terms
               </a>
               .
             </p>
             <p className="mt-3">
               To opt in, a user enters a valid mobile number and checks the box labeled{" "}
               <span className="font-medium text-foreground">
-                &quot;I agree to receive SMS reminders&quot;
+                &quot;I agree to receive SMS reminders from Meatup.Club. Message frequency varies.
+                Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help.&quot;
               </span>{" "}
               before saving preferences. Consent is stored with the user record and can be revoked
               anytime by replying STOP or disabling SMS in profile settings.
@@ -106,12 +114,12 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-semibold text-foreground">Contact</h2>
             <p className="mt-3">
-              Questions about privacy or SMS consent can be submitted at{" "}
+              Questions about privacy or SMS consent can be sent to{" "}
               <a
-                href="https://github.com/jeffspahr/meatup-club/issues"
+                href="mailto:support@meatup.club"
                 className="font-medium text-accent underline underline-offset-2"
               >
-                https://github.com/jeffspahr/meatup-club/issues
+                support@meatup.club
               </a>
               .
             </p>
