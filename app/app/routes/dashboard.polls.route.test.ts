@@ -250,6 +250,57 @@ describe("dashboard.polls route", () => {
         },
       ]);
     });
+
+    it("normalizes legacy restaurant photo URLs for poll cards", async () => {
+      vi.mocked(getRestaurantsForPoll).mockResolvedValue([
+        {
+          id: 88,
+          name: "Prime Steakhouse",
+          address: "123 Main St",
+          cuisine: "Steakhouse",
+          created_by: 777,
+          vote_count: 4,
+          user_has_voted: true,
+          photo_url:
+            "https://places.googleapis.com/v1/places/abc123/photos/photo-1/media?maxHeightPx=320&maxWidthPx=640&key=test-key",
+        },
+        {
+          id: 89,
+          name: "Oak Steakhouse",
+          address: "456 Elm St",
+          cuisine: "Steakhouse",
+          created_by: 777,
+          vote_count: 2,
+          user_has_voted: false,
+          photo_url:
+            "https://meatup.club/api/places/photo?name=places%2Fdef456%2Fphotos%2Fphoto-2&maxHeightPx=400&maxWidthPx=400",
+        },
+      ] as never);
+      const db = createMockDb({
+        creatorById: {
+          777: { name: "Alice", email: "alice@example.com" },
+        },
+      });
+
+      const result = await loader({
+        request: createRequest(),
+        context: { cloudflare: { env: { DB: db } } } as never,
+        params: {},
+      } as never);
+
+      expect(result.restaurantSuggestions).toEqual([
+        expect.objectContaining({
+          id: 88,
+          photo_url:
+            "/api/places/photo?name=places%2Fabc123%2Fphotos%2Fphoto-1&maxHeightPx=320&maxWidthPx=640",
+        }),
+        expect.objectContaining({
+          id: 89,
+          photo_url:
+            "/api/places/photo?name=places%2Fdef456%2Fphotos%2Fphoto-2&maxHeightPx=400&maxWidthPx=400",
+        }),
+      ]);
+    });
   });
 
   describe("restaurant actions", () => {
