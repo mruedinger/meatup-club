@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { isDateInPastLocal } from "../lib/dateUtils";
 import { CheckIcon } from "@heroicons/react/24/outline";
+import { Button } from "./ui";
 
 interface DateVote {
   date_suggestion_id: number;
@@ -31,6 +32,7 @@ export function DoodleView({
 }: DoodleViewProps) {
   // Only render on client-side to use local timezone consistently
   const [isMounted, setIsMounted] = useState(false);
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
@@ -86,9 +88,29 @@ export function DoodleView({
     return null;
   }
 
+  // Determine the top 2 distinct vote counts to show by default
+  const distinctCounts = [...new Set(votedDates.map(d => dateVoteCounts.get(d.suggested_date) || 0))]
+    .sort((a, b) => b - a);
+  const topTwoCounts = new Set(distinctCounts.slice(0, 2));
+  const popularDates = votedDates.filter(d => topTwoCounts.has(dateVoteCounts.get(d.suggested_date) || 0));
+  const hasHiddenDates = popularDates.length < votedDates.length;
+
+  const displayedDates = showAll ? votedDates : popularDates;
+
   return (
     <div className="mt-6">
-      <h4 className="text-sm font-semibold text-foreground mb-3">Availability Grid</h4>
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-semibold text-foreground">Availability Grid</h4>
+        {hasHiddenDates && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowAll(v => !v)}
+          >
+            {showAll ? `Show top dates (${popularDates.length})` : `Show all dates (${votedDates.length})`}
+          </Button>
+        )}
+      </div>
       <div className="overflow-x-auto">
         <table className="min-w-full border-collapse">
           <thead>
@@ -96,7 +118,7 @@ export function DoodleView({
               <th className="border border-border bg-muted px-3 py-2 text-left text-xs font-medium text-muted-foreground">
                 Name
               </th>
-              {votedDates.map(date => {
+              {displayedDates.map(date => {
                 // Parse date as local (not UTC) to avoid timezone shifts
                 const [year, month, day] = date.suggested_date.split('-').map(Number);
                 const localDate = new Date(year, month - 1, day);
@@ -140,7 +162,7 @@ export function DoodleView({
                       <span className="ml-1 text-[10px] text-blue-600 dark:text-blue-400">(you)</span>
                     )}
                   </td>
-                  {votedDates.map(date => {
+                  {displayedDates.map(date => {
                     const hasVoted = userVotes.has(date.suggested_date);
                     const isCurrentUserRow = user.id === currentUserId;
                     const [year, month, day] = date.suggested_date.split("-").map(Number);
@@ -193,7 +215,7 @@ export function DoodleView({
               <td className="border border-border px-3 py-2 text-xs font-semibold text-foreground">
                 Total Votes
               </td>
-              {votedDates.map(date => (
+              {displayedDates.map(date => (
                 <td
                   key={date.id}
                   className="border border-border px-3 py-2 text-center text-xs font-semibold text-foreground"
