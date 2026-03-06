@@ -146,7 +146,7 @@ export function DoodleView({ dateSuggestions, dateVotes, currentUserId }: Doodle
           <tbody>
             {uniqueUsers.map(user => {
               const userVotes = voteMap.get(user.id) || new Set();
-              const voteCount = displayedDates.filter(d => userVotes.has(d.suggested_date)).length;
+              const voteCount = votedDates.filter(d => userVotes.has(d.suggested_date)).length;
 
               return (
                 <tr key={user.id} className={user.id === currentUserId ? 'bg-blue-50 dark:bg-blue-900/30' : ''}>
