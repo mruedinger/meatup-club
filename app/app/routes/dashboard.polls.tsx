@@ -21,6 +21,7 @@ import {
 import { Alert, Badge, Button, Card, EmptyState, PageHeader, UserAvatar } from "../components/ui";
 import { CommentSection } from "../components/CommentSection";
 import type { Poll } from "../lib/types";
+import { normalizeRestaurantPhotoUrl } from "../lib/restaurant-photo-url";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = await requireActiveUser(request, context);
@@ -66,6 +67,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         : null;
       return {
         ...r,
+        photo_url: normalizeRestaurantPhotoUrl(r.photo_url, request.url),
         suggested_by_name: creator?.name || null,
         suggested_by_email: creator?.email || null,
       };
