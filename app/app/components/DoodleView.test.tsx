@@ -16,6 +16,7 @@ describe("DoodleView", () => {
     render(
       <DoodleView
         currentUserId={2}
+        onVoteToggle={vi.fn()}
         dateSuggestions={[
           { id: 1, suggested_date: "2026-04-10", vote_count: 99 },
           { id: 2, suggested_date: "2026-04-20", vote_count: 99 },
@@ -67,6 +68,7 @@ describe("DoodleView", () => {
     render(
       <DoodleView
         currentUserId={2}
+        onVoteToggle={vi.fn()}
         dateSuggestions={[
           { id: 1, suggested_date: "2026-04-20", vote_count: 999 },
           { id: 2, suggested_date: "2026-04-21", vote_count: 999 },
@@ -161,6 +163,7 @@ describe("DoodleView", () => {
     render(
       <DoodleView
         currentUserId={1}
+        onVoteToggle={vi.fn()}
         dateSuggestions={[
           { id: 1, suggested_date: "2026-04-20", vote_count: 0 },
           { id: 2, suggested_date: "2026-04-21", vote_count: 0 },
@@ -214,10 +217,61 @@ describe("DoodleView", () => {
     expect(screen.getByText("Apr 22")).toBeInTheDocument();
   });
 
+  it("lets the current user toggle only their own row cells", async () => {
+    const onVoteToggle = vi.fn();
+
+    render(
+      <DoodleView
+        currentUserId={2}
+        onVoteToggle={onVoteToggle}
+        dateSuggestions={[
+          { id: 2, suggested_date: "2026-04-20", vote_count: 99 },
+          { id: 3, suggested_date: "2026-04-22", vote_count: 99 },
+        ]}
+        dateVotes={[
+          {
+            date_suggestion_id: 2,
+            user_id: 1,
+            suggested_date: "2026-04-20",
+            user_name: "Alice",
+            user_email: "alice@example.com",
+          },
+          {
+            date_suggestion_id: 3,
+            user_id: 1,
+            suggested_date: "2026-04-22",
+            user_name: "Alice",
+            user_email: "alice@example.com",
+          },
+          {
+            date_suggestion_id: 2,
+            user_id: 2,
+            suggested_date: "2026-04-20",
+            user_name: "Current User",
+            user_email: "current@example.com",
+          },
+        ]}
+      />
+    );
+
+    await screen.findByText("Availability Grid");
+
+    fireEvent.click(screen.getByRole("button", { name: "Vote for Apr 22" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove your vote for Apr 20" }));
+
+    expect(onVoteToggle).toHaveBeenNthCalledWith(1, 3, false);
+    expect(onVoteToggle).toHaveBeenNthCalledWith(2, 2, true);
+
+    const otherUserRow = screen.getByText("Alice").closest("tr");
+    expect(otherUserRow).not.toBeNull();
+    expect(within(otherUserRow as HTMLTableRowElement).queryByRole("button")).not.toBeInTheDocument();
+  });
+
   it("renders nothing when there are no future voted dates", async () => {
     const { container } = render(
       <DoodleView
         currentUserId={2}
+        onVoteToggle={vi.fn()}
         dateSuggestions={[{ id: 1, suggested_date: "2026-04-10", vote_count: 3 }]}
         dateVotes={[
           {
