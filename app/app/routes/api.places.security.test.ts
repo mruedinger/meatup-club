@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loader as searchLoader } from "./api.places.search";
 import { loader as detailsLoader } from "./api.places.details";
 import { loader as photoLoader } from "./api.places.photo";
@@ -36,6 +36,12 @@ describe("Places API route guards", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("image-bytes", {
+      status: 200,
+      headers: {
+        "Content-Type": "image/jpeg",
+      },
+    })));
     vi.mocked(getUser).mockResolvedValue({
       id: 1,
       status: "active",
@@ -46,6 +52,10 @@ describe("Places API route guards", () => {
       remaining: 10,
       resetAt: Math.floor(Date.now() / 1000) + 60,
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("returns 401 when unauthenticated on places search", async () => {
@@ -85,5 +95,24 @@ describe("Places API route guards", () => {
     } as any);
 
     expect(response.status).toBe(400);
+  });
+
+  it("accepts long Google photo resource names that exceed 255 characters", async () => {
+    const longPhotoName = `places/${"A".repeat(320)}/photos/${"B".repeat(140)}`;
+    const requestUrl = new URL("http://localhost/api/places/photo");
+    requestUrl.search = new URLSearchParams({
+      name: longPhotoName,
+      maxHeightPx: "400",
+      maxWidthPx: "400",
+    }).toString();
+
+    const response = await photoLoader({
+      request: new Request(requestUrl),
+      context: mockContext,
+      params: {},
+    } as any);
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
   });
 });
