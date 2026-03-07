@@ -31,16 +31,31 @@ function TestHarness({ onSelect = vi.fn() }: { onSelect?: (details: typeof sampl
 
 describe("RestaurantAutocomplete", () => {
   let originalFetch: typeof global.fetch;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     originalFetch = global.fetch;
+    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.useFakeTimers();
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
+    consoleErrorSpy.mockRestore();
     vi.useRealTimers();
     vi.clearAllMocks();
+  });
+
+  it("ignores keyboard navigation while the dropdown is closed", () => {
+    global.fetch = vi.fn();
+
+    render(<TestHarness />);
+
+    const input = screen.getByPlaceholderText("Start typing restaurant name...");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(input).toHaveValue("");
   });
 
   it("searches after debounce and selects a suggestion with the keyboard", async () => {
@@ -89,6 +104,52 @@ describe("RestaurantAutocomplete", () => {
     expect(input).toHaveValue("Prime Steakhouse");
   });
 
+  it("supports hover, arrow-up, and escape navigation in the dropdown", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      json: async () => ({
+        places: [
+          {
+            id: "place-1",
+            displayName: { text: "Prime Steakhouse" },
+            formattedAddress: "123 Main St",
+          },
+          {
+            id: "place-2",
+            displayName: { text: "Oak & Ember" },
+            formattedAddress: "456 Oak Ave",
+          },
+        ],
+      }),
+    } as never);
+
+    render(<TestHarness />);
+
+    const input = screen.getByPlaceholderText("Start typing restaurant name...");
+    fireEvent.change(input, { target: { value: "st" } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const firstOption = screen.getByRole("button", { name: /Prime Steakhouse/i });
+    const secondOption = screen.getByRole("button", { name: /Oak & Ember/i });
+
+    await act(async () => {
+      fireEvent.mouseEnter(secondOption);
+    });
+    expect(secondOption.className).toContain("bg-amber-50");
+
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+    });
+    expect(firstOption.className).toContain("bg-amber-50");
+
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Escape" });
+    });
+    expect(screen.queryByText("Oak & Ember")).not.toBeInTheDocument();
+  });
+
   it("skips short searches and shows an empty-state message when no places are found", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       json: async () => ({ places: [] }),
@@ -112,6 +173,61 @@ describe("RestaurantAutocomplete", () => {
     });
 
     expect(screen.getByText("No restaurants found. Try a different search term.")).toBeInTheDocument();
+  });
+
+  it("logs search failures and keeps the dropdown closed", async () => {
+    const error = new Error("search failed");
+    global.fetch = vi.fn().mockRejectedValue(error);
+
+    render(<TestHarness />);
+
+    const input = screen.getByPlaceholderText("Start typing restaurant name...");
+    fireEvent.change(input, { target: { value: "pr" } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+      await Promise.resolve();
+    });
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to fetch suggestions:", error);
+    expect(screen.queryByText("No restaurants found. Try a different search term.")).not.toBeInTheDocument();
+  });
+
+  it("logs details failures when selecting a suggestion with the mouse", async () => {
+    const onSelect = vi.fn();
+    const error = new Error("details failed");
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        json: async () => ({
+          places: [
+            {
+              id: "place-1",
+              displayName: { text: "Prime Steakhouse" },
+              formattedAddress: "123 Main St",
+            },
+          ],
+        }),
+      } as never)
+      .mockRejectedValueOnce(error);
+
+    render(<TestHarness onSelect={onSelect} />);
+
+    const input = screen.getByPlaceholderText("Start typing restaurant name...");
+    fireEvent.change(input, { target: { value: "pr" } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Prime Steakhouse/i }));
+      await Promise.resolve();
+    });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to fetch place details:", error);
+    expect(input).toHaveValue("pr");
   });
 
   it("closes the dropdown when the user clicks outside the component", async () => {
