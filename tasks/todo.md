@@ -737,3 +737,40 @@ Close the remaining low-coverage helper blind spots in cache, confirmation, webh
   - `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/webhook-idempotency.server.ts`: `58.33%` -> `100.00%`
   - `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/db.server.ts`: `60.00%` -> `100.00%`
 - Remaining follow-up gaps worth the next slice: `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.content.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.email-templates.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.details.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.about.tsx`, and `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/dateUtils.ts`.
+
+## Post-Roadmap Testing Slice 9 (2026-03-07)
+
+### Goal
+Raise the remaining admin editor routes by covering route-state behavior that action/loader tests currently miss.
+
+### Acceptance Criteria
+- [ ] Add route-state coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.content.tsx`.
+- [ ] Add route-state coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.email-templates.tsx`.
+- [ ] Run targeted verification plus `npm run typecheck` and `npm run test:coverage`.
+- [ ] Record the updated baseline and next remaining gaps.
+
+### Active Tasks
+- [x] Review the current admin editor routes and the existing tests around them.
+- [x] Implement the new route-state coverage additions.
+- [x] Run final verification and summarize the updated baseline.
+- [ ] Commit and publish the updated branch.
+
+### Working Notes
+- The current tests already cover loaders and primary actions; the uncovered lines are mostly in component state management, navigation-based form reset, preview/details rendering, and destructive-action affordances.
+- Keep the route modules real and control navigation state with a shared mock variable, similar to the other route UI slices.
+
+### Results
+- Added `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.content.route-ui.test.tsx` with submit-cycle auto-reset, failed-update retention, preview rendering, and cancel-flow coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.content.tsx`.
+- Added `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.email-templates.route-ui.test.tsx` with create-reset, failed-update retention, preview/details rendering, checkbox state, and delete-confirm coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.email-templates.tsx`.
+- Updated `/Users/jspahr/repo/meatup-club-pr8a/app/TESTING.md` to reflect the new baseline and the reduced admin-route gap list.
+- Verification performed:
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run test:run -- app/routes/dashboard.admin.content.route-ui.test.tsx app/routes/dashboard.admin.email-templates.route-ui.test.tsx` passed (`4` tests).
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run typecheck` passed.
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run test:coverage` passed (`75` files, `474` tests).
+- Coverage improvements from the post-slice-8 baseline:
+  - Overall statements: `86.41%` -> `87.36%`
+  - Overall branches: `74.74%` -> `75.59%`
+  - Overall functions: `82.16%` -> `84.50%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.content.tsx`: `65.07%` -> `85.71%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.email-templates.tsx`: `72.28%` -> `85.54%`
+- Remaining follow-up gaps worth the next slice: `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.details.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.about.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.photo.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.search.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/dateUtils.ts`, and `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.events.tsx`.

@@ -52,21 +52,21 @@ Filter to a specific file or pattern when iterating:
 npm run test -- email.server.test.ts
 ```
 
-## Current Baseline (2026-03-07, after post-roadmap slice 8)
+## Current Baseline (2026-03-07, after post-roadmap slice 9)
 
 Live numbers from `npm run test:coverage`:
 
-- `73` passing test files
-- `470` passing tests
-- `86.41%` statements
-- `74.74%` branches
-- `82.16%` functions
-- `86.46%` lines
+- `75` passing test files
+- `474` passing tests
+- `87.36%` statements
+- `75.59%` branches
+- `84.50%` functions
+- `87.42%` lines
 
 Coverage by area:
 
 - `app/app/lib`: `90.46%` statements
-- `app/app/routes`: `84.65%` statements
+- `app/app/routes`: `86.10%` statements
 - `app/app/components`: `88.21%` statements
 
 Best-covered production files:
@@ -117,14 +117,13 @@ Best-covered production files:
 
 Largest remaining gaps in active product code:
 
-- `app/routes/dashboard.admin.content.tsx`: `65.08%`
 - `app/routes/dashboard.admin.polls.tsx`: `67.24%`
-- `app/routes/dashboard.admin.email-templates.tsx`: `72.29%`
 - `app/routes/api.places.details.tsx`: `73.68%`
 - `app/routes/dashboard.about.tsx`: `75.00%`
 - `app/routes/api.places.photo.tsx`: `77.35%`
 - `app/routes/api.places.search.tsx`: `79.31%`
 - `app/lib/dateUtils.ts`: `79.71%`
+- `app/routes/dashboard.admin.events.tsx`: `80.86%`
 
 Important interpretation notes:
 
@@ -618,6 +617,34 @@ Current status:
   Global coverage moved to `86.41%` statements / `74.74%` branches / `82.16%` functions.
   `app/app/lib` moved to `90.46%` statement coverage.
 
+### Post-Roadmap Slice 9: Admin Editor Route-State Coverage
+
+Target files:
+
+- `app/routes/dashboard.admin.content.tsx`
+- `app/routes/dashboard.admin.email-templates.tsx`
+
+Focus:
+
+- Navigation-driven submit/reset behavior that loader/action tests do not cover
+- Preview/details rendering on the admin editor pages
+- Error-retention behavior after failed updates
+- Delete-confirm affordances and editor form state persistence
+
+Exit criteria:
+
+- The admin editor routes are defended by real route-state coverage, not only isolated action tests
+- `dashboard.admin.content.tsx` and `dashboard.admin.email-templates.tsx` are no longer in the lowest-coverage admin tier
+
+Current status:
+
+- Complete on 2026-03-07.
+- Result:
+  `dashboard.admin.content.tsx` moved to `85.71%` statements / `89.28%` branches.
+  `dashboard.admin.email-templates.tsx` moved to `85.54%` statements / `81.81%` branches.
+  Global coverage moved to `87.36%` statements / `75.59%` branches / `84.50%` functions.
+  `app/app/routes` moved to `86.10%` statement coverage.
+
 ## Verification Checklist
 
 Before merging behavior changes:
@@ -643,4 +670,4 @@ npm run build
 ## Last Updated
 
 - Date: 2026-03-07
-- Baseline suite: `470` tests in `73` files
+- Baseline suite: `474` tests in `75` files
