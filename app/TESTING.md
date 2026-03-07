@@ -52,22 +52,22 @@ Filter to a specific file or pattern when iterating:
 npm run test -- email.server.test.ts
 ```
 
-## Current Baseline (2026-03-07, after post-roadmap slices 4 and 5)
+## Current Baseline (2026-03-07, after post-roadmap slice 6)
 
 Live numbers from `npm run test:coverage`:
 
-- `65` passing test files
-- `443` passing tests
-- `79.47%` statements
-- `65.26%` branches
-- `69.00%` functions
-- `79.49%` lines
+- `67` passing test files
+- `450` passing tests
+- `81.91%` statements
+- `68.12%` branches
+- `73.03%` functions
+- `81.97%` lines
 
 Coverage by area:
 
-- `app/app/lib`: `86.28%` statements
-- `app/app/routes`: `75.52%` statements
-- `app/app/components`: `88.03%` statements
+- `app/app/lib`: `86.29%` statements
+- `app/app/routes`: `79.27%` statements
+- `app/app/components`: `88.21%` statements
 
 Best-covered production files:
 
@@ -84,6 +84,7 @@ Best-covered production files:
 - `app/routes/logout.tsx`: `100%` statements
 - `app/routes/pending.tsx`: `100%` statements
 - `app/routes/dashboard.admin.analytics.tsx`: `93.75%` statements
+- `app/routes/dashboard.admin.members.tsx`: `88.88%` statements
 - `app/routes/dashboard.admin.events.tsx`: `80.86%` statements
 - `app/routes/accept-invite.tsx`: `93.33%` statements
 - `app/routes/api.admin.setup-resend.tsx`: `87.80%` statements
@@ -111,14 +112,14 @@ Best-covered production files:
 
 Largest remaining gaps in active product code:
 
-- `app/routes/dashboard.admin.members.tsx`: `49.07%`
-- `app/routes/dashboard.admin.polls.tsx`: `50.86%`
+- `app/lib/cache.server.ts`: `0.00%`
 - `app/routes/dashboard._index.tsx`: `50.72%`
-- `app/routes/dashboard.events.tsx`: `61.53%`
-- `app/routes/dashboard.polls.tsx`: `64.24%`
-- `app/lib/rate-limit.server.ts`: `58.33%`
-- `app/routes/dashboard.admin.content.tsx`: `65.07%`
-- `app/lib/dateUtils.ts`: `79.71%`
+- `app/lib/webhook-idempotency.server.ts`: `58.33%`
+- `app/lib/db.server.ts`: `60.00%`
+- `app/routes/dashboard.events.tsx`: `61.54%`
+- `app/routes/dashboard.polls.tsx`: `64.25%`
+- `app/routes/dashboard.admin.content.tsx`: `65.08%`
+- `app/routes/dashboard.admin.polls.tsx`: `67.24%`
 
 Important interpretation notes:
 
@@ -529,6 +530,32 @@ Current status:
   `dashboard.restaurants.tsx` moved to `95.18%` statements / `77.21%` branches.
   Global coverage moved to `79.47%` statements / `65.26%` branches / `69.00%` functions.
 
+### Post-Roadmap Slice 6: Admin Members and Poll Management Coverage
+
+Target files:
+
+- `app/routes/dashboard.admin.members.tsx`
+- `app/routes/dashboard.admin.polls.tsx`
+
+Focus:
+
+- Real loader/UI coverage for member invite, edit, re-login, and removal flows
+- Admin poll loader coverage using the real route module instead of only the form-contract guardrail
+- Close/create/history state coverage for active and closed polls
+
+Exit criteria:
+
+- Admin member management is defended by route-level UI tests, not just action tests
+- Admin poll management has direct loader/component coverage on the real route module
+
+Current status:
+
+- Complete on 2026-03-07.
+- Result:
+  `dashboard.admin.members.tsx` moved to `88.88%` statements / `76.19%` branches.
+  `dashboard.admin.polls.tsx` moved to `67.24%` statements / `67.17%` branches.
+  Global coverage moved to `81.91%` statements / `68.12%` branches / `73.03%` functions.
+
 ## Verification Checklist
 
 Before merging behavior changes:
@@ -554,4 +581,4 @@ npm run build
 ## Last Updated
 
 - Date: 2026-03-07
-- Baseline suite: `443` tests in `65` files
+- Baseline suite: `450` tests in `67` files

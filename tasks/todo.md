@@ -617,3 +617,40 @@ Add route/UI coverage for the remaining member voting surfaces so `dashboard.dat
   - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.dates.tsx`: `42.05%` -> `83.17%`
   - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.restaurants.tsx`: `45.78%` -> `95.18%`
 - Remaining follow-up gaps worth the next slice: `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.members.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard._index.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.events.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.polls.tsx`, and `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/rate-limit.server.ts`.
+
+## Post-Roadmap Testing Slice 6 (2026-03-07)
+
+### Goal
+Replace the remaining admin route blind spots with real loader/UI coverage for member management and poll management.
+
+### Acceptance Criteria
+- [ ] Add loader/component coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.members.tsx`.
+- [ ] Add loader/component coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.tsx`.
+- [ ] Run targeted verification plus `npm run typecheck` and `npm run test:coverage`.
+- [ ] Record the updated baseline and next remaining gaps.
+
+### Active Tasks
+- [x] Review the current admin route implementations and their existing action/security tests.
+- [x] Implement the new admin-members and admin-polls route/UI tests.
+- [x] Run final verification and summarize the updated baseline.
+- [ ] Commit and publish the updated branch.
+
+### Working Notes
+- `dashboard.admin.members.tsx` already has solid action coverage, so the highest-value additions are its loader, invite-form UI, edit/reset flow, and destructive submit wiring.
+- `dashboard.admin.polls.tsx` still relies heavily on a form-contract test that does not mount the real route. This slice should cover the actual loader and component with real route data shapes.
+
+### Results
+- Added `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.members.route-ui.test.tsx` with loader coverage, invite-form UI coverage, edit-reset behavior, and re-login/remove submit wiring for `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.members.tsx`.
+- Added `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.route-ui.test.tsx` with non-admin redirect coverage, admin loader coverage, and real close/create/history UI coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.tsx`.
+- Updated `/Users/jspahr/repo/meatup-club-pr8a/app/TESTING.md` and `/Users/jspahr/repo/meatup-club-pr8a/tasks/lessons.md` to reflect the new baseline and the route-form query lesson.
+- Verification performed:
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run test:run -- app/routes/dashboard.admin.members.route-ui.test.tsx app/routes/dashboard.admin.polls.route-ui.test.tsx` passed (`7` tests).
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run typecheck` passed.
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run test:coverage` passed (`67` files, `450` tests).
+- Coverage improvements from the post-slice-5 baseline:
+  - Overall statements: `79.47%` -> `81.91%`
+  - Overall branches: `65.26%` -> `68.12%`
+  - Overall functions: `69.00%` -> `73.03%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.members.tsx`: `49.07%` -> `88.88%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.tsx`: `50.86%` -> `67.24%`
+- Remaining follow-up gaps worth the next slice: `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard._index.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.events.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.polls.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.content.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/rate-limit.server.ts`, and `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/dateUtils.ts`.
