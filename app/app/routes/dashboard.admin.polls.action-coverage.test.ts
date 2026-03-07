@@ -28,11 +28,8 @@ type MockDbOptions = {
   date?: Record<string, unknown> | null;
   users?: Array<Record<string, unknown>>;
   createPollError?: Error | null;
-  beginError?: Error | null;
   insertEventError?: Error | null;
-  closeUpdateError?: Error | null;
   closeUpdateChanges?: number;
-  rollbackError?: Error | null;
 };
 
 function createMockDb({
@@ -41,13 +38,11 @@ function createMockDb({
   date = { id: 20, suggested_date: "2026-06-10", vote_count: 3 },
   users = [],
   createPollError = null,
-  beginError = null,
   insertEventError = null,
-  closeUpdateError = null,
   closeUpdateChanges = 1,
-  rollbackError = null,
 }: MockDbOptions = {}) {
   const runCalls: Array<{ sql: string; bindArgs: unknown[] }> = [];
+  let storedEventId: number | null = null;
 
   const prepare = vi.fn((sql: string) => {
     const normalizedSql = sql.replace(/\s+/g, " ").trim();
@@ -65,6 +60,10 @@ function createMockDb({
         return date;
       }
 
+      if (normalizedSql === "SELECT created_event_id FROM polls WHERE id = ?") {
+        return { created_event_id: closeUpdateChanges > 0 ? storedEventId : null };
+      }
+
       throw new Error(`Unexpected first() query: ${normalizedSql}`);
     };
 
@@ -79,10 +78,6 @@ function createMockDb({
     const runForArgs = async (bindArgs: unknown[]) => {
       runCalls.push({ sql: normalizedSql, bindArgs });
 
-      if (normalizedSql === "BEGIN TRANSACTION" && beginError) {
-        throw beginError;
-      }
-
       if (
         normalizedSql.includes("INSERT INTO polls (title, status, created_by) VALUES (?, 'active', ?)")
         && createPollError
@@ -94,19 +89,15 @@ function createMockDb({
         throw insertEventError;
       }
 
+      if (normalizedSql.includes("INSERT INTO events")) {
+        storedEventId = 555;
+      }
+
       if (
         normalizedSql.includes("UPDATE polls SET status = 'closed', closed_by = ?, closed_at = CURRENT_TIMESTAMP")
         && normalizedSql.includes("winning_restaurant_id = ?")
       ) {
-        if (closeUpdateError) {
-          throw closeUpdateError;
-        }
-
         return { meta: { changes: closeUpdateChanges } };
-      }
-
-      if (normalizedSql === "ROLLBACK" && rollbackError) {
-        throw rollbackError;
       }
 
       return { meta: { changes: 1, last_row_id: 555 } };
@@ -124,7 +115,16 @@ function createMockDb({
     };
   });
 
-  return { prepare, runCalls };
+  const batch = vi.fn(async (statements: Array<{ run: () => Promise<unknown> }>) => {
+    const results = [];
+    for (const statement of statements) {
+      results.push(await statement.run());
+    }
+    return results;
+  });
+  const withSession = vi.fn(() => ({ prepare, batch }));
+
+  return { prepare, batch, withSession, runCalls };
 }
 
 function createRequest(formEntries: Record<string, string>) {
@@ -311,7 +311,7 @@ describe("dashboard.admin.polls action coverage", () => {
     });
   });
 
-  it("rolls back and returns an error when the close transaction fails", async () => {
+  it("returns an error when the shared close helper reports a conflict", async () => {
     const db = createMockDb({ closeUpdateChanges: 0 });
 
     const result = await action({
@@ -328,7 +328,8 @@ describe("dashboard.admin.polls action coverage", () => {
     } as never);
 
     expect(result).toEqual({ error: "Failed to close poll. Please try again." });
-    expect(db.runCalls.some((call) => call.sql === "ROLLBACK")).toBe(true);
+    expect(db.withSession).toHaveBeenCalledWith("first-primary");
+    expect(db.batch).toHaveBeenCalledTimes(1);
   });
 
   it("queues invite sending when an event is created with invite delivery enabled", async () => {

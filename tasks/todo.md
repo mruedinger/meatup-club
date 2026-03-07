@@ -898,3 +898,20 @@ Raise the remaining member-facing date surfaces and small shared helper/componen
   - `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/restaurant-photo-url.ts`: `81.81%` -> `100.00%`
   - `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/session.server.ts`: `83.33%` -> `100.00%`
 - Remaining follow-up gaps worth the next slice: `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.events.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.email-templates.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.content.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.admin.setup-resend.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/components/DashboardNav.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.polls.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/sms.server.ts`, and `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard._index.tsx`.
+
+## Branch Management Fix (2026-03-07)
+
+### Goal
+Move the post-merge testing commits off the already-merged `codex/testing-zero-routes` branch and reopen them as a clean PR from current `origin/main`.
+
+### Acceptance Criteria
+- [x] Identify the commits made after PR `#88` merged.
+- [x] Create a fresh `codex/*` branch from current `origin/main`.
+- [x] Replay the post-merge commits onto the fresh branch.
+- [ ] Push the fresh branch and open a replacement PR.
+- [ ] Summarize the corrected branch/PR state and any cleanup follow-up.
+
+### Working Notes
+- `origin/main` already contains merge commit `4e081bd` for PR `#88`, so every later coverage commit on `codex/testing-zero-routes` needs to move to a new branch instead of staying attached to the merged PR.
+- Fresh replacement branch: `/Users/jspahr/repo/meatup-club-pr89a` on `codex/testing-post-pr88`.
+- Current `origin/main` also includes the shared `closePoll()` refactor that uses `session.batch()`, so the replayed `dashboard.admin.polls.action-coverage.test.ts` harness needed to move off old rollback assertions before `npm run test:coverage` would pass again.

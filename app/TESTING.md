@@ -52,21 +52,21 @@ Filter to a specific file or pattern when iterating:
 npm run test -- email.server.test.ts
 ```
 
-## Current Baseline (2026-03-07, after post-roadmap slice 12)
+## Current Baseline (2026-03-07, replacement branch verification)
 
 Live numbers from `npm run test:coverage`:
 
 - `79` passing test files
-- `538` passing tests
-- `92.30%` statements
-- `80.06%` branches
-- `89.17%` functions
-- `92.31%` lines
+- `542` passing tests
+- `92.23%` statements
+- `79.78%` branches
+- `89.61%` functions
+- `92.17%` lines
 
 Coverage by area:
 
-- `app/app/lib`: `93.64%` statements
-- `app/app/routes`: `90.69%` statements
+- `app/app/lib`: `93.63%` statements
+- `app/app/routes`: `90.57%` statements
 - `app/app/components`: `98.84%` statements
 
 Best-covered production files:
@@ -105,8 +105,9 @@ Best-covered production files:
 - `app/routes/api.webhooks.email-rsvp.tsx`: `92.50%` statements
 - `app/routes/api.webhooks.sms.tsx`: `100%` statements
 - `app/routes/dashboard.admin.backfill-hours.tsx`: `91.66%` statements
-- `app/routes/api.polls.tsx`: `88.57%` statements
-- `app/routes/dashboard.dates.tsx`: `83.17%` statements
+- `app/routes/api.polls.tsx`: `89.23%` statements
+- `app/routes/dashboard._index.tsx`: `88.40%` statements
+- `app/routes/dashboard.polls.tsx`: `88.26%` statements
 - `app/routes/dashboard.restaurants.tsx`: `95.18%` statements
 - `app/lib/email.server.ts`: `89.14%` statements
 - `app/lib/sms.server.ts`: `88.27%` statements
@@ -777,4 +778,4 @@ npm run build
 ## Last Updated
 
 - Date: 2026-03-07
-- Baseline suite: `538` tests in `79` files
+- Baseline suite: `542` tests in `79` files
