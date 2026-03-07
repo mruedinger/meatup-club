@@ -52,22 +52,22 @@ Filter to a specific file or pattern when iterating:
 npm run test -- email.server.test.ts
 ```
 
-## Current Baseline (2026-03-07, after post-roadmap slice 10)
+## Current Baseline (2026-03-07, after post-roadmap slice 11)
 
 Live numbers from `npm run test:coverage`:
 
-- `76` passing test files
-- `491` passing tests
-- `88.66%` statements
-- `76.93%` branches
-- `84.92%` functions
-- `88.74%` lines
+- `77` passing test files
+- `521` passing tests
+- `90.80%` statements
+- `78.72%` branches
+- `87.04%` functions
+- `90.78%` lines
 
 Coverage by area:
 
-- `app/app/lib`: `90.46%` statements
-- `app/app/routes`: `88.09%` statements
-- `app/app/components`: `88.21%` statements
+- `app/app/lib`: `92.80%` statements
+- `app/app/routes`: `89.78%` statements
+- `app/app/components`: `92.66%` statements
 
 Best-covered production files:
 
@@ -76,6 +76,7 @@ Best-covered production files:
 - `app/lib/auth.server.ts`: `95.00%` statements
 - `app/lib/cache.server.ts`: `100%` statements
 - `app/lib/confirm.client.ts`: `100%` statements
+- `app/lib/dateUtils.ts`: `100%` statements
 - `app/lib/db.server.ts`: `100%` statements
 - `app/lib/webhook-idempotency.server.ts`: `100%` statements
 - `app/routes/auth.google.callback.tsx`: `100%` statements
@@ -87,6 +88,9 @@ Best-covered production files:
 - `app/routes/dashboard.rsvp.tsx`: `100%` statements
 - `app/routes/logout.tsx`: `100%` statements
 - `app/routes/pending.tsx`: `100%` statements
+- `app/routes/api.places.search.tsx`: `100%` statements
+- `app/routes/api.places.details.tsx`: `100%` statements
+- `app/routes/api.places.photo.tsx`: `100%` statements
 - `app/routes/dashboard.admin.analytics.tsx`: `93.75%` statements
 - `app/routes/dashboard.admin.polls.tsx`: `95.68%` statements
 - `app/routes/dashboard.admin.members.tsx`: `88.88%` statements
@@ -108,23 +112,20 @@ Best-covered production files:
 - `app/components/AddRestaurantModal.tsx`: `100%` statements
 - `app/components/CommentSection.tsx`: `100%` statements
 - `app/components/DoodleView.tsx`: `100%` statements
+- `app/components/RestaurantAutocomplete.tsx`: `100%` statements
 - `app/components/VoteLeadersCard.tsx`: `100%` statements
 - `app/components/DateCalendar.tsx`: `82.41%` statements
-- `app/components/RestaurantAutocomplete.tsx`: `80.64%` statements
-- `app/routes/api.places.search.tsx`: `79.31%` statements
-- `app/routes/api.places.details.tsx`: `73.68%` statements
-- `app/routes/api.places.photo.tsx`: `76.92%` statements
 - `app/lib/rsvps.server.ts`: `100%` statements
 
 Largest remaining gaps in active product code:
 
-- `app/routes/api.places.details.tsx`: `73.68%`
 - `app/routes/dashboard.about.tsx`: `75.00%`
-- `app/routes/api.places.photo.tsx`: `77.35%`
-- `app/routes/api.places.search.tsx`: `79.31%`
-- `app/lib/dateUtils.ts`: `79.71%`
 - `app/routes/dashboard.admin.events.tsx`: `80.86%`
-- `app/components/RestaurantAutocomplete.tsx`: `80.64%`
+- `app/components/ui/UserAvatar.tsx`: `81.81%`
+- `app/lib/restaurant-photo-url.ts`: `81.81%`
+- `app/components/DateCalendar.tsx`: `82.41%`
+- `app/routes/dashboard.dates.tsx`: `83.17%`
+- `app/lib/session.server.ts`: `83.33%`
 
 Important interpretation notes:
 
@@ -671,6 +672,42 @@ Current status:
   Global coverage moved to `88.66%` statements / `76.93%` branches / `84.92%` functions.
   `app/app/routes` moved to `88.09%` statement coverage.
 
+### Post-Roadmap Slice 11: Date Utilities, Places Handlers, and Restaurant Autocomplete
+
+Target files:
+
+- `app/lib/dateUtils.ts`
+- `app/routes/api.places.search.tsx`
+- `app/routes/api.places.details.tsx`
+- `app/routes/api.places.photo.tsx`
+- `app/components/RestaurantAutocomplete.tsx`
+
+Focus:
+
+- Date/time fallback and backwards-compatibility wrappers
+- Places validation, unauthorized/configuration, and stale-photo recovery branches
+- Sparse/default Places response transforms
+- Autocomplete keyboard-return, hover, mouse selection, and fetch-failure behavior
+
+Exit criteria:
+
+- The remaining low-coverage date and Places surfaces are fully covered
+- Restaurant autocomplete behavior coverage includes the missed state-transition/error branches
+
+Current status:
+
+- Complete on 2026-03-07.
+- Result:
+  `dateUtils.ts` moved to `100.00%` statements / `100.00%` branches.
+  `api.places.search.tsx` moved to `100.00%` statements / `95.45%` branches.
+  `api.places.details.tsx` moved to `100.00%` statements / `93.18%` branches.
+  `api.places.photo.tsx` moved to `100.00%` statements / `89.13%` branches.
+  `RestaurantAutocomplete.tsx` moved to `100.00%` statements / `85.71%` branches.
+  Global coverage moved to `90.80%` statements / `78.72%` branches / `87.04%` functions.
+  `app/app/routes` moved to `89.78%` statement coverage.
+  `app/app/lib` moved to `92.80%` statement coverage.
+  `app/app/components` moved to `92.66%` statement coverage.
+
 ## Verification Checklist
 
 Before merging behavior changes:
@@ -696,4 +733,4 @@ npm run build
 ## Last Updated
 
 - Date: 2026-03-07
-- Baseline suite: `491` tests in `76` files
+- Baseline suite: `521` tests in `77` files

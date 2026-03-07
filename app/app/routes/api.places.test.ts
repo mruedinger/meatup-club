@@ -21,15 +21,22 @@ vi.mock("../lib/cache.server", () => ({
   ) => fetcher(),
 }));
 
-function createContext() {
+function createContext(options: {
+  apiKey?: string | undefined;
+  run?: (sql: string, bindArgs: unknown[]) => Promise<unknown>;
+} = {}) {
   const runCalls: Array<{ sql: string; bindArgs: unknown[] }> = [];
-  const waitUntil = vi.fn();
+  const waitUntilPromises: Promise<unknown>[] = [];
+  const waitUntil = vi.fn((promise: Promise<unknown>) => {
+    waitUntilPromises.push(promise);
+  });
+  const run = options.run ?? (async () => ({ meta: { changes: 1 } }));
   const db = {
     prepare: vi.fn((sql: string) => ({
       bind: (...bindArgs: unknown[]) => ({
         run: async () => {
           runCalls.push({ sql, bindArgs });
-          return { meta: { changes: 1 } };
+          return run(sql, bindArgs);
         },
       }),
     })),
@@ -40,7 +47,7 @@ function createContext() {
       cloudflare: {
         env: {
           DB: db,
-          GOOGLE_PLACES_API_KEY: "test-places-api-key",
+          GOOGLE_PLACES_API_KEY: options.apiKey ?? "test-places-api-key",
         },
         ctx: {
           waitUntil,
@@ -50,6 +57,7 @@ function createContext() {
     db,
     runCalls,
     waitUntil,
+    waitUntilPromises,
   };
 }
 
@@ -198,6 +206,60 @@ describe("Places API behavior", () => {
     });
   });
 
+  it("falls back to app defaults for sparse place details responses", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "place-2",
+        priceLevel: "PRICE_LEVEL_UNKNOWN",
+        types: ["meal_takeaway"],
+      }),
+    } as never);
+
+    const { context } = createContext();
+    const response = await detailsLoader({
+      request: new Request("http://localhost/api/places/details?placeId=place-2"),
+      context,
+      params: {},
+    } as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      placeId: "place-2",
+      name: "",
+      address: "",
+      phone: "",
+      website: "",
+      googleMapsUrl: "",
+      rating: 0,
+      ratingCount: 0,
+      priceLevel: 0,
+      photoUrl: "",
+      cuisine: "Restaurant",
+      openingHours: null,
+    });
+  });
+
+  it("returns a 500 when the details upstream request fails", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      text: async () => "quota exceeded",
+    } as never);
+
+    const { context } = createContext();
+    const response = await detailsLoader({
+      request: new Request("http://localhost/api/places/details?placeId=place-1"),
+      context,
+      params: {},
+    } as never);
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Failed to fetch place details",
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith("Place details error:", "quota exceeded");
+  });
+
   it("proxies place photos when Google returns media successfully", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       new Response("image-bytes", {
@@ -272,5 +334,129 @@ describe("Places API behavior", () => {
         ],
       },
     ]);
+  });
+
+  it("logs background photo-url update failures without breaking the fresh-image response", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("stale", {
+          status: 404,
+          headers: { "Content-Type": "text/plain" },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            photos: [{ name: "places/place-1/photos/fresh-photo" }],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response("fresh-image", {
+          status: 200,
+          headers: { "Content-Type": "image/jpeg" },
+        })
+      );
+
+    const { context, waitUntilPromises } = createContext({
+      run: async () => {
+        throw new Error("update failed");
+      },
+    });
+    const response = await photoLoader({
+      request: new Request(
+        "http://localhost/api/places/photo?name=places/place-1/photos/stale-photo&maxHeightPx=400&maxWidthPx=400"
+      ),
+      context,
+      params: {},
+    } as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toBe("fresh-image");
+    await Promise.allSettled(waitUntilPromises);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "Failed to update photo_url:",
+      expect.any(Error)
+    );
+  });
+
+  it("returns the original photo status when the stale photo cannot be refreshed", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("stale", {
+          status: 404,
+          headers: { "Content-Type": "text/plain" },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response("not-found", {
+          status: 404,
+          headers: { "Content-Type": "text/plain" },
+        })
+      );
+
+    const { context } = createContext();
+    const response = await photoLoader({
+      request: new Request(
+        "http://localhost/api/places/photo?name=places/place-1/photos/stale-photo&maxHeightPx=400&maxWidthPx=400"
+      ),
+      context,
+      params: {},
+    } as never);
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "Failed to fetch place photo",
+    });
+  });
+
+  it("returns the original photo status when fetching a fresh photo name throws", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("stale", {
+          status: 404,
+          headers: { "Content-Type": "text/plain" },
+        })
+      )
+      .mockRejectedValueOnce(new Error("details unavailable"));
+
+    const { context } = createContext();
+    const response = await photoLoader({
+      request: new Request(
+        "http://localhost/api/places/photo?name=places/place-1/photos/stale-photo&maxHeightPx=400&maxWidthPx=400"
+      ),
+      context,
+      params: {},
+    } as never);
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "Failed to fetch place photo",
+    });
+  });
+
+  it("returns a 500 when the photo proxy throws unexpectedly", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("network down"));
+
+    const { context } = createContext();
+    const response = await photoLoader({
+      request: new Request(
+        "http://localhost/api/places/photo?name=places/place-1/photos/photo-1&maxHeightPx=400&maxWidthPx=400"
+      ),
+      context,
+      params: {},
+    } as never);
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Failed to fetch place photo",
+    });
   });
 });

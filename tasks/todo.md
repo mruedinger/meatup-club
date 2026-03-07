@@ -753,7 +753,7 @@ Raise the remaining admin editor routes by covering route-state behavior that ac
 - [x] Review the current admin editor routes and the existing tests around them.
 - [x] Implement the new route-state coverage additions.
 - [x] Run final verification and summarize the updated baseline.
-- [ ] Commit and publish the updated branch.
+- [x] Commit and publish the updated branch.
 
 ### Working Notes
 - The current tests already cover loaders and primary actions; the uncovered lines are mostly in component state management, navigation-based form reset, preview/details rendering, and destructive-action affordances.
@@ -789,7 +789,7 @@ Raise `dashboard.admin.polls.tsx` by covering the remaining close/create action 
 - [x] Review the remaining uncovered action paths in `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.tsx`.
 - [x] Implement the new admin-polls action coverage additions.
 - [x] Run final verification and summarize the updated baseline.
-- [ ] Commit and publish the updated branch.
+- [x] Commit and publish the updated branch.
 
 ### Working Notes
 - The existing admin-polls suites already cover loader/UI, data-shape consistency, and a few security checks; the remaining uncovered paths are mostly action validation, selection checks, and transaction/send-invites branches.
@@ -808,3 +808,46 @@ Raise `dashboard.admin.polls.tsx` by covering the remaining close/create action 
   - Overall functions: `84.50%` -> `84.92%`
   - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.tsx`: `67.24%` -> `95.68%`
 - Remaining follow-up gaps worth the next slice: `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.details.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.about.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.photo.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.search.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/dateUtils.ts`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.events.tsx`, and `/Users/jspahr/repo/meatup-club-pr8a/app/app/components/RestaurantAutocomplete.tsx`.
+
+## Post-Roadmap Testing Slice 11 (2026-03-07)
+
+### Goal
+Raise the remaining low-coverage date and Places code by covering guard, fallback, and error-handling branches that the current suites still miss.
+
+### Acceptance Criteria
+- [x] Add direct unit coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/dateUtils.ts`.
+- [x] Extend Places route tests for `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.search.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.details.tsx`, and `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.photo.tsx`.
+- [x] Extend UI behavior coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/components/RestaurantAutocomplete.tsx`.
+- [x] Run targeted verification plus `npm run typecheck` and `npm run test:coverage`.
+- [x] Record the updated baseline and next remaining gaps.
+
+### Active Tasks
+- [x] Review the remaining uncovered branches in the target files.
+- [x] Implement the new date/Places/autocomplete coverage additions.
+- [x] Run final verification and summarize the updated baseline.
+- [ ] Commit and publish the updated branch.
+
+### Working Notes
+- `app/coverage/coverage-final.json` shows the remaining misses are mostly validation guards, fallback transforms, stale-photo failure branches, and autocomplete keyboard/error state transitions.
+- Keep the route modules real and extend the existing Places/autocomplete suites instead of creating a second overlapping harness.
+
+### Results
+- Added `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/dateUtils.test.ts` with direct coverage for timezone fallback, UTC/local comparisons, datetime formatting, and backwards-compatible wrapper functions in `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/dateUtils.ts`.
+- Expanded `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.security.test.ts` to cover missing input, invalid formats, inactive users, missing API configuration, invalid photo dimensions, and rate limiting across the Places handlers.
+- Expanded `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.test.ts` to cover sparse details transforms, upstream details failures, stale-photo refresh failures, background photo URL update failures, and top-level photo proxy errors.
+- Expanded `/Users/jspahr/repo/meatup-club-pr8a/app/app/components/RestaurantAutocomplete.test.tsx` to cover closed-dropdown keyboard handling, hover/arrow-up/escape navigation, search failure handling, and mouse-based detail fetch failures.
+- Updated `/Users/jspahr/repo/meatup-club-pr8a/app/TESTING.md` to reflect the new baseline and the updated post-Places/date gap list.
+- Verification performed:
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run test:run -- app/lib/dateUtils.test.ts app/routes/api.places.test.ts app/routes/api.places.security.test.ts app/components/RestaurantAutocomplete.test.tsx` passed (`42` tests).
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run typecheck` passed.
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run test:coverage` passed (`77` files, `521` tests).
+- Coverage improvements from the post-slice-10 baseline:
+  - Overall statements: `88.66%` -> `90.80%`
+  - Overall branches: `76.93%` -> `78.72%`
+  - Overall functions: `84.92%` -> `87.04%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/dateUtils.ts`: `79.71%` -> `100.00%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.search.tsx`: `79.31%` -> `100.00%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.details.tsx`: `73.68%` -> `100.00%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.photo.tsx`: `76.92%` -> `100.00%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/components/RestaurantAutocomplete.tsx`: `80.64%` -> `100.00%`
+- Remaining follow-up gaps worth the next slice: `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.about.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.events.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/components/ui/UserAvatar.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/restaurant-photo-url.ts`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/components/DateCalendar.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.dates.tsx`, and `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/session.server.ts`.
