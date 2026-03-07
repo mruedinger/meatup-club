@@ -3,6 +3,8 @@ import { getUser } from "../lib/auth.server";
 import { withCache } from "../lib/cache.server";
 import { enforceRateLimit } from "../lib/rate-limit.server";
 
+const MAX_PHOTO_NAME_LENGTH = 1024;
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const name = url.searchParams.get("name")?.trim();
@@ -14,7 +16,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     return Response.json({ error: "Photo name is required" }, { status: 400 });
   }
 
-  if (!/^places\/[^/]+\/photos\/[^/]+$/.test(name) || name.length > 255) {
+  if (
+    !/^places\/[^/]+\/photos\/[^/]+$/.test(name) ||
+    name.length > MAX_PHOTO_NAME_LENGTH
+  ) {
     return Response.json({ error: "Invalid photo name format" }, { status: 400 });
   }
 
