@@ -694,3 +694,46 @@ Replace the remaining member dashboard route blind spots with real component cov
   - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.events.tsx`: `61.53%` -> `100.00%`
   - `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.polls.tsx`: `64.24%` -> `88.26%`
 - Remaining follow-up gaps worth the next slice: `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/cache.server.ts`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/confirm.client.ts`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/webhook-idempotency.server.ts`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/db.server.ts`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.content.tsx`, and `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.tsx`.
+
+## Post-Roadmap Testing Slice 8 (2026-03-07)
+
+### Goal
+Close the remaining low-coverage helper blind spots in cache, confirmation, webhook idempotency, and DB helper code.
+
+### Acceptance Criteria
+- [ ] Add direct tests for `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/cache.server.ts`.
+- [ ] Add direct tests for `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/confirm.client.ts`.
+- [ ] Add direct tests for `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/webhook-idempotency.server.ts`.
+- [ ] Expand direct tests for `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/db.server.ts`.
+- [ ] Run targeted verification plus `npm run typecheck` and `npm run test:coverage`.
+- [ ] Record the updated baseline and next remaining gaps.
+
+### Active Tasks
+- [x] Review the target helper modules and existing test patterns.
+- [x] Implement the helper coverage additions.
+- [x] Run final verification and summarize the updated baseline.
+- [ ] Commit and publish the updated branch.
+
+### Working Notes
+- This is mostly direct unit coverage; these helpers are small enough that mocking at the DB/cache boundary is sufficient and lower-risk than expanding more route suites first.
+- `db.server.ts` already has `ensureUser` tests, so this slice should add the missing helper coverage rather than replacing the existing tests.
+
+### Results
+- Added `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/cache.server.test.ts` with cache-hit, cache-miss, and non-cacheable-response coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/cache.server.ts`.
+- Added `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/confirm.client.test.ts` with browser and non-browser coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/confirm.client.ts`.
+- Added `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/webhook-idempotency.server.test.ts` with reserve/duplicate/fail-open/rethrow coverage for `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/webhook-idempotency.server.ts`.
+- Expanded `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/db.server.test.ts` to cover `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/db.server.ts` lookup, active-state, and forced re-auth helpers in addition to `ensureUser`.
+- Updated `/Users/jspahr/repo/meatup-club-pr8a/app/TESTING.md` to reflect the new helper baseline and remaining active gaps.
+- Verification performed:
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run test:run -- app/lib/cache.server.test.ts app/lib/confirm.client.test.ts app/lib/webhook-idempotency.server.test.ts app/lib/db.server.test.ts` passed (`15` tests).
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run typecheck` passed.
+  - `cd /Users/jspahr/repo/meatup-club-pr8a/app && npm run test:coverage` passed (`73` files, `470` tests).
+- Coverage improvements from the post-slice-7 baseline:
+  - Overall statements: `85.43%` -> `86.41%`
+  - Overall branches: `74.20%` -> `74.74%`
+  - Overall functions: `81.10%` -> `82.16%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/cache.server.ts`: `0.00%` -> `100.00%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/confirm.client.ts`: `0.00%` -> `100.00%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/webhook-idempotency.server.ts`: `58.33%` -> `100.00%`
+  - `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/db.server.ts`: `60.00%` -> `100.00%`
+- Remaining follow-up gaps worth the next slice: `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.content.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.polls.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.admin.email-templates.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/api.places.details.tsx`, `/Users/jspahr/repo/meatup-club-pr8a/app/app/routes/dashboard.about.tsx`, and `/Users/jspahr/repo/meatup-club-pr8a/app/app/lib/dateUtils.ts`.

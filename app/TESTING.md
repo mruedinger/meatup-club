@@ -52,20 +52,20 @@ Filter to a specific file or pattern when iterating:
 npm run test -- email.server.test.ts
 ```
 
-## Current Baseline (2026-03-07, after post-roadmap slice 7)
+## Current Baseline (2026-03-07, after post-roadmap slice 8)
 
 Live numbers from `npm run test:coverage`:
 
-- `70` passing test files
-- `457` passing tests
-- `85.43%` statements
-- `74.20%` branches
-- `81.10%` functions
-- `85.46%` lines
+- `73` passing test files
+- `470` passing tests
+- `86.41%` statements
+- `74.74%` branches
+- `82.16%` functions
+- `86.46%` lines
 
 Coverage by area:
 
-- `app/app/lib`: `86.29%` statements
+- `app/app/lib`: `90.46%` statements
 - `app/app/routes`: `84.65%` statements
 - `app/app/components`: `88.21%` statements
 
@@ -74,6 +74,10 @@ Best-covered production files:
 - `app/lib/activity.server.ts`: `100%` statements
 - `app/lib/email-templates.ts`: `100%` statements
 - `app/lib/auth.server.ts`: `95.00%` statements
+- `app/lib/cache.server.ts`: `100%` statements
+- `app/lib/confirm.client.ts`: `100%` statements
+- `app/lib/db.server.ts`: `100%` statements
+- `app/lib/webhook-idempotency.server.ts`: `100%` statements
 - `app/routes/auth.google.callback.tsx`: `100%` statements
 - `app/routes/dashboard.tsx`: `100%` statements
 - `app/routes/dashboard.admin._index.tsx`: `100%` statements
@@ -113,14 +117,14 @@ Best-covered production files:
 
 Largest remaining gaps in active product code:
 
-- `app/lib/cache.server.ts`: `0.00%`
-- `app/lib/confirm.client.ts`: `0.00%`
-- `app/lib/webhook-idempotency.server.ts`: `58.33%`
-- `app/lib/db.server.ts`: `60.00%`
 - `app/routes/dashboard.admin.content.tsx`: `65.08%`
 - `app/routes/dashboard.admin.polls.tsx`: `67.24%`
 - `app/routes/dashboard.admin.email-templates.tsx`: `72.29%`
 - `app/routes/api.places.details.tsx`: `73.68%`
+- `app/routes/dashboard.about.tsx`: `75.00%`
+- `app/routes/api.places.photo.tsx`: `77.35%`
+- `app/routes/api.places.search.tsx`: `79.31%`
+- `app/lib/dateUtils.ts`: `79.71%`
 
 Important interpretation notes:
 
@@ -585,6 +589,35 @@ Current status:
   `dashboard.polls.tsx` moved to `88.26%` statements / `81.32%` branches.
   Global coverage moved to `85.43%` statements / `74.20%` branches / `81.10%` functions.
 
+### Post-Roadmap Slice 8: Cache, Confirmation, Idempotency, and DB Helper Coverage
+
+Target files:
+
+- `app/lib/cache.server.ts`
+- `app/lib/confirm.client.ts`
+- `app/lib/webhook-idempotency.server.ts`
+- `app/lib/db.server.ts`
+
+Focus:
+
+- Cloudflare cache hit/miss behavior and cache-control propagation
+- Centralized destructive-confirmation behavior in browser and non-browser execution
+- Webhook idempotency reservation behavior, including fail-open migration handling
+- Direct DB helper coverage for lookup, active-state checks, and forced re-authentication
+
+Exit criteria:
+
+- Remaining low-coverage helper blind spots are covered directly instead of only through route mocks
+- The lib directory no longer has obvious utility-level `0%` gaps
+
+Current status:
+
+- Complete on 2026-03-07.
+- Result:
+  `cache.server.ts`, `confirm.client.ts`, `db.server.ts`, and `webhook-idempotency.server.ts` are now at `100.00%` statement coverage.
+  Global coverage moved to `86.41%` statements / `74.74%` branches / `82.16%` functions.
+  `app/app/lib` moved to `90.46%` statement coverage.
+
 ## Verification Checklist
 
 Before merging behavior changes:
@@ -610,4 +643,4 @@ npm run build
 ## Last Updated
 
 - Date: 2026-03-07
-- Baseline suite: `457` tests in `70` files
+- Baseline suite: `470` tests in `73` files
