@@ -252,6 +252,8 @@ describe("dashboard.polls route", () => {
     });
 
     it("normalizes legacy restaurant photo URLs for poll cards", async () => {
+      const longPhotoName = `places/${"A".repeat(320)}/photos/${"B".repeat(140)}`;
+
       vi.mocked(getRestaurantsForPoll).mockResolvedValue([
         {
           id: 88,
@@ -274,6 +276,20 @@ describe("dashboard.polls route", () => {
           user_has_voted: false,
           photo_url:
             "https://meatup.club/api/places/photo?name=places%2Fdef456%2Fphotos%2Fphoto-2&maxHeightPx=400&maxWidthPx=400",
+        },
+        {
+          id: 90,
+          name: "Stanbury",
+          address: "938 N Blount St",
+          cuisine: "Restaurant",
+          created_by: 777,
+          vote_count: 1,
+          user_has_voted: false,
+          photo_url: `https://meatup.club/api/places/photo?${new URLSearchParams({
+            name: longPhotoName,
+            maxHeightPx: "400",
+            maxWidthPx: "400",
+          }).toString()}`,
         },
       ] as never);
       const db = createMockDb({
@@ -299,7 +315,25 @@ describe("dashboard.polls route", () => {
           photo_url:
             "/api/places/photo?name=places%2Fdef456%2Fphotos%2Fphoto-2&maxHeightPx=400&maxWidthPx=400",
         }),
+        expect.objectContaining({
+          id: 90,
+          photo_url: `/api/places/photo?${new URLSearchParams({
+            name: longPhotoName,
+            maxHeightPx: "400",
+            maxWidthPx: "400",
+          }).toString()}`,
+        }),
       ]);
+
+      const normalizedPhotoUrl = result.restaurantSuggestions.find(
+        (restaurant: { id: number }) => restaurant.id === 90
+      )?.photo_url;
+
+      expect(normalizedPhotoUrl).toBeTruthy();
+      expect(
+        new URL(`http://localhost${normalizedPhotoUrl}`).searchParams.get("name")
+      ).toBe(longPhotoName);
+      expect(longPhotoName.length).toBeGreaterThan(255);
     });
   });
 
