@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import EventsPage from "./dashboard.events";
 import type { Route } from "./+types/dashboard.events";
@@ -8,7 +8,7 @@ vi.mock("react-router", async () => {
 
   return {
     ...actual,
-    Form: ({ children, ...props }: any) => <form {...props}>{children}</form>,
+    Form: ({ children, preventScrollReset, ...props }: any) => <form {...props}>{children}</form>,
   };
 });
 
@@ -38,7 +38,48 @@ describe("dashboard.events UI", () => {
     vi.clearAllMocks();
   });
 
-  it("renders RSVP states, attendee groups, past-event badges, and auto-submit radio changes", () => {
+  it("renders multiple upcoming events as separate collapsed tiles", () => {
+    renderEvents({
+      upcomingEvents: [
+        {
+          id: 1,
+          restaurant_name: "Prime Steakhouse",
+          restaurant_address: "123 Main St",
+          event_date: "2026-06-20",
+          event_time: "19:00",
+          userRsvp: { status: "yes", comments: "I'll be there" },
+          allRsvps: [],
+          notResponded: [],
+        },
+        {
+          id: 2,
+          restaurant_name: "River Grill",
+          restaurant_address: "99 Water St",
+          event_date: "2026-07-10",
+          event_time: "18:30",
+          userRsvp: null,
+          allRsvps: [],
+          notResponded: [],
+        },
+      ],
+      pastEvents: [],
+    } as unknown as Route.ComponentProps["loaderData"]);
+
+    expect(screen.getByText("2 upcoming events")).toBeInTheDocument();
+
+    const firstTile = screen.getByRole("article", { name: "Prime Steakhouse" });
+    const secondTile = screen.getByRole("article", { name: "River Grill" });
+
+    expect(
+      within(firstTile).getByRole("button", { name: "Open details for Prime Steakhouse" })
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(
+      within(secondTile).getByRole("button", { name: "Open details for River Grill" })
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Your RSVP")).not.toBeInTheDocument();
+  });
+
+  it("reveals RSVP details inline and auto-submits radio changes", () => {
     const requestSubmitSpy = vi
       .spyOn(HTMLFormElement.prototype, "requestSubmit")
       .mockImplementation(() => undefined);
@@ -108,15 +149,15 @@ describe("dashboard.events UI", () => {
             displayStatus: "cancelled",
           },
         ],
-      } as Route.ComponentProps["loaderData"],
-      { error: "Missing required fields" } as Route.ComponentProps["actionData"]
+      } as unknown as Route.ComponentProps["loaderData"],
+      { error: "Missing required fields" } as unknown as Route.ComponentProps["actionData"]
     );
 
     expect(screen.getByText("Missing required fields")).toBeInTheDocument();
-    expect(screen.getByText("Prime Steakhouse")).toBeInTheDocument();
-    expect(screen.getByText("RSVPs (1 yes, 1 maybe, 1 no, 1 pending)")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("I'll be there")).toBeInTheDocument();
-    expect(screen.getByText("Taylor")).toBeInTheDocument();
+    const primeTile = screen.getByRole("article", { name: "Prime Steakhouse" });
+    expect(within(primeTile).getByText("Your RSVP")).toBeInTheDocument();
+    expect(within(primeTile).getByDisplayValue("I'll be there")).toBeInTheDocument();
+    expect(within(primeTile).getByText("Taylor")).toBeInTheDocument();
     expect(screen.getByText("Past Grill")).toBeInTheDocument();
     expect(screen.getByText("completed")).toBeInTheDocument();
     expect(screen.getByText("cancelled")).toBeInTheDocument();
@@ -128,11 +169,49 @@ describe("dashboard.events UI", () => {
     requestSubmitSpy.mockRestore();
   });
 
+  it("expands a selected event tile in place", () => {
+    renderEvents({
+      upcomingEvents: [
+        {
+          id: 1,
+          restaurant_name: "Prime Steakhouse",
+          restaurant_address: "123 Main St",
+          event_date: "2026-06-20",
+          event_time: "19:00",
+          userRsvp: null,
+          allRsvps: [],
+          notResponded: [],
+        },
+        {
+          id: 2,
+          restaurant_name: "River Grill",
+          restaurant_address: "99 Water St",
+          event_date: "2026-07-10",
+          event_time: "18:30",
+          userRsvp: null,
+          allRsvps: [],
+          notResponded: [],
+        },
+      ],
+      pastEvents: [],
+    } as unknown as Route.ComponentProps["loaderData"]);
+
+    const secondTile = screen.getByRole("article", { name: "River Grill" });
+
+    fireEvent.click(within(secondTile).getByRole("button", { name: "Open details for River Grill" }));
+
+    expect(
+      within(secondTile).getByRole("button", { name: "Hide details for River Grill" })
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(within(secondTile).getByText("Your RSVP")).toBeInTheDocument();
+    expect(within(secondTile).getByLabelText("Comments (Optional)")).toBeInTheDocument();
+  });
+
   it("renders empty states when there are no upcoming or past events", () => {
     renderEvents({
       upcomingEvents: [],
       pastEvents: [],
-    } as Route.ComponentProps["loaderData"]);
+    } as unknown as Route.ComponentProps["loaderData"]);
 
     expect(screen.getByText("No upcoming events")).toBeInTheDocument();
     expect(screen.getByText("No past events yet")).toBeInTheDocument();

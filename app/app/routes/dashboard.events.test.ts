@@ -113,6 +113,7 @@ describe("dashboard.events route", () => {
     const db = createMockDb({
       events: [
         { id: 1, restaurant_name: "Future Steakhouse", event_date: "2026-05-01", event_time: "19:00", status: "upcoming" },
+        { id: 4, restaurant_name: "Sooner Chop House", event_date: "2026-04-20", event_time: "18:30", status: "upcoming" },
         { id: 2, restaurant_name: "Past Grill", event_date: "2026-04-01", event_time: "18:00", status: "upcoming" },
         { id: 3, restaurant_name: "Cancelled Bistro", event_date: "2026-06-01", event_time: "20:00", status: "cancelled" },
       ],
@@ -138,8 +139,21 @@ describe("dashboard.events route", () => {
       params: {},
     } as never);
 
-    expect(result.upcomingEvents).toHaveLength(1);
+    expect(result.upcomingEvents).toHaveLength(2);
+    expect(result.upcomingEvents.map((event) => event.id)).toEqual([4, 1]);
     expect(result.upcomingEvents[0]).toEqual(
+      expect.objectContaining({
+        id: 4,
+        userRsvp: null,
+        allRsvps: [],
+        notResponded: [
+          { id: 123, name: "User", email: "user@example.com", picture: null },
+          { id: 456, name: "Alice", email: "alice@example.com", picture: null },
+          { id: 789, name: "Bob", email: "bob@example.com", picture: null },
+        ],
+      })
+    );
+    expect(result.upcomingEvents[1]).toEqual(
       expect.objectContaining({
         id: 1,
         userRsvp: { id: 90, status: "yes", comments: "See you there" },
@@ -151,8 +165,8 @@ describe("dashboard.events route", () => {
       })
     );
     expect(result.pastEvents).toEqual([
-      expect.objectContaining({ id: 2, displayStatus: "completed" }),
       expect.objectContaining({ id: 3, displayStatus: "cancelled" }),
+      expect.objectContaining({ id: 2, displayStatus: "completed" }),
     ]);
   });
 
@@ -182,8 +196,7 @@ describe("dashboard.events route", () => {
       params: {},
     } as never);
 
-    expect((response as Response).status).toBe(302);
-    expect((response as Response).headers.get("Location")).toBe("/dashboard/events");
+    expect(response).toEqual({ ok: true });
     expect(upsertRsvp).toHaveBeenCalledWith({
       db,
       eventId: 1,
@@ -211,7 +224,7 @@ describe("dashboard.events route", () => {
       params: {},
     } as never);
 
-    expect((response as Response).status).toBe(302);
+    expect(response).toEqual({ ok: true });
     expect(logActivity).toHaveBeenCalledWith(
       expect.objectContaining({
         actionType: "update_rsvp",
