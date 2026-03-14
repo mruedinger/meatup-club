@@ -7,6 +7,10 @@ interface EmptyStateProps {
   action?: ReactNode;
 }
 
+/**
+ * Empty-state message with optional icon and action.
+ * @example <EmptyState title="No events yet" description="Create one to get started." />
+ */
 export function EmptyState({ icon, title, description, action }: EmptyStateProps) {
   return (
     <div className="card-shell p-8 text-center">

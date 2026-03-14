@@ -8,6 +8,7 @@ import { forceUserReauth } from "../lib/db.server";
 import { Alert, Badge, Button, Card, PageHeader, UserAvatar } from "../components/ui";
 import type { Member } from "../lib/types";
 import { AdminLayout } from "../components/AdminLayout";
+import { confirmAction } from "../lib/confirm.client";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   await requireAdmin(request, context);
@@ -244,7 +245,7 @@ export default function AdminMembersPage({ loaderData, actionData }: Route.Compo
   }, [actionData, navigation.state]);
 
   function handleDelete(memberId: number) {
-    if (!confirm('Are you sure you want to remove this member? This will also delete all their votes and suggestions.')) {
+    if (!confirmAction('Are you sure you want to remove this member? This will also delete all their votes and suggestions.')) {
       return;
     }
 
@@ -255,7 +256,7 @@ export default function AdminMembersPage({ loaderData, actionData }: Route.Compo
   }
 
   function handleForceReauth(memberId: number, memberName: string) {
-    if (!confirm(`Force ${memberName} to re-login? Their session will be invalidated and they'll need to sign in again with Google OAuth.`)) {
+    if (!confirmAction(`Force ${memberName} to re-login? Their session will be invalidated and they'll need to sign in again with Google OAuth.`)) {
       return;
     }
 

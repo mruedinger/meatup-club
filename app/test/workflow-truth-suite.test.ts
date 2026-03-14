@@ -184,6 +184,10 @@ describe("workflow truth suite", () => {
     } as never);
 
     expect(events).toEqual({
+      currentUser: {
+        id: userId,
+        isAdmin: false,
+      },
       upcomingEvents: [],
       pastEvents: [],
     });

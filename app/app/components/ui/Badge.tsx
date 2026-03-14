@@ -16,6 +16,10 @@ const variantClasses: Record<BadgeVariant, string> = {
   muted: "badge-muted",
 };
 
+/**
+ * Compact status label.
+ * @example <Badge variant="success">Active</Badge>
+ */
 export function Badge({ variant = "accent", className = "", children }: BadgeProps) {
   return (
     <span className={`badge ${variantClasses[variant]} ${className}`}>

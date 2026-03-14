@@ -5,6 +5,7 @@ import { requireAdmin } from "../lib/auth.server";
 import { Alert, Badge, Button, Card, PageHeader } from "../components/ui";
 import type { EmailTemplate } from "../lib/types";
 import { AdminLayout } from "../components/AdminLayout";
+import { confirmAction } from "../lib/confirm.client";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   await requireAdmin(request, context);
@@ -363,7 +364,7 @@ export default function AdminEmailTemplatesPage({ loaderData, actionData }: Rout
                       size="sm"
                       type="submit"
                       onClick={(e) => {
-                        if (!confirm('Are you sure you want to delete this template?')) {
+                        if (!confirmAction('Are you sure you want to delete this template?')) {
                           e.preventDefault();
                         }
                       }}

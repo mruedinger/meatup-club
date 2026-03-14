@@ -11,10 +11,6 @@ import {
   getAppTimeZone,
   isEventInPastInTimeZone,
 } from "../lib/dateUtils";
-import {
-  sendEventCancellation,
-  sendEventUpdate,
-} from "../lib/email.server";
 import { sendAdhocSmsReminder } from "../lib/sms.server";
 
 let navigationState: { state: string; formData: FormData | null } = {
@@ -46,11 +42,6 @@ vi.mock("../lib/activity.server", () => ({
   logActivity: vi.fn(),
 }));
 
-vi.mock("../lib/email.server", () => ({
-  sendEventUpdate: vi.fn(),
-  sendEventCancellation: vi.fn(),
-}));
-
 vi.mock("../lib/sms.server", () => ({
   sendAdhocSmsReminder: vi.fn(),
 }));
@@ -72,11 +63,8 @@ type MockDbOptions = {
   smsMembers?: Array<Record<string, unknown>>;
   rsvpRows?: Array<Record<string, unknown>>;
   activeMembers?: Array<Record<string, unknown>>;
-  updateRecipients?: Array<Record<string, unknown>>;
-  deleteRecipients?: Array<Record<string, unknown>>;
   eventForLookup?: Record<string, unknown> | null;
   eventForDelete?: Record<string, unknown> | null;
-  eventMeta?: Record<string, unknown> | null;
 };
 
 function createMockDb({
@@ -84,14 +72,15 @@ function createMockDb({
   smsMembers = [],
   rsvpRows = [],
   activeMembers = [],
-  updateRecipients = [],
-  deleteRecipients = [],
   eventForLookup = {
     id: 42,
     restaurant_name: "Prime Steakhouse",
     restaurant_address: "123 Main St",
     event_date: "2026-05-20",
     event_time: "18:00",
+    status: "upcoming",
+    calendar_sequence: 4,
+    created_by: 1,
   },
   eventForDelete = {
     id: 42,
@@ -101,14 +90,21 @@ function createMockDb({
     event_time: "18:00",
     calendar_sequence: 4,
   },
-  eventMeta = { calendar_sequence: 5 },
 }: MockDbOptions = {}) {
   const runCalls: Array<{ sql: string; bindArgs: unknown[] }> = [];
 
   const prepare = vi.fn((sql: string) => {
     const normalizedSql = sql.replace(/\s+/g, " ").trim();
+    const isSelectStatement = normalizedSql.startsWith("SELECT");
 
     const firstForArgs = async (_bindArgs: unknown[]) => {
+      if (
+        normalizedSql ===
+        "SELECT id, restaurant_name, restaurant_address, event_date, event_time, status, calendar_sequence, created_by FROM events WHERE id = ?"
+      ) {
+        return eventForLookup;
+      }
+
       if (
         normalizedSql === "SELECT id, restaurant_name, event_date, event_time FROM events WHERE id = ?" ||
         normalizedSql ===
@@ -122,10 +118,6 @@ function createMockDb({
         "SELECT id, restaurant_name, restaurant_address, event_date, event_time, calendar_sequence FROM events WHERE id = ?"
       ) {
         return eventForDelete;
-      }
-
-      if (normalizedSql === "SELECT calendar_sequence FROM events WHERE id = ?") {
-        return eventMeta;
       }
 
       throw new Error(`Unexpected first() query: ${normalizedSql}`);
@@ -148,12 +140,12 @@ function createMockDb({
         return { results: activeMembers };
       }
 
-      if (normalizedSql.includes("SELECT u.email, r.status as rsvp_status")) {
-        return { results: updateRecipients };
+      if (normalizedSql.includes("FROM event_email_deliveries") && normalizedSql.includes("latest_delivery_type")) {
+        return { results: [] };
       }
 
-      if (normalizedSql === "SELECT u.email FROM users u WHERE u.status = 'active'") {
-        return { results: deleteRecipients };
+      if (normalizedSql === "SELECT id FROM event_email_deliveries WHERE batch_id = ? ORDER BY id ASC") {
+        return { results: [{ id: 21 }, { id: 22 }] };
       }
 
       throw new Error(`Unexpected all() query: ${normalizedSql}`);
@@ -167,16 +159,36 @@ function createMockDb({
     return {
       first: () => firstForArgs([]),
       all: () => allForArgs([]),
-      run: () => runForArgs([]),
+      ...(isSelectStatement ? {} : { run: () => runForArgs([]) }),
       bind: (...bindArgs: unknown[]) => ({
         first: () => firstForArgs(bindArgs),
         all: () => allForArgs(bindArgs),
-        run: () => runForArgs(bindArgs),
+        ...(isSelectStatement ? {} : { run: () => runForArgs(bindArgs) }),
       }),
     };
   });
 
-  return { prepare, runCalls };
+  const batch = vi.fn(async (statements: Array<{ run?: () => Promise<unknown>; all?: () => Promise<unknown> }>) => {
+    const results = [];
+
+    for (const statement of statements) {
+      if (typeof statement.run === "function") {
+        results.push(await statement.run());
+        continue;
+      }
+
+      if (typeof statement.all === "function") {
+        results.push(await statement.all());
+        continue;
+      }
+
+      throw new Error("Unexpected statement without run/all handler");
+    }
+
+    return results;
+  });
+
+  return { prepare, batch, runCalls };
 }
 
 function createRequest(formEntries: Record<string, string>) {
@@ -219,8 +231,6 @@ describe("dashboard.admin.events loader and UI", () => {
       },
       activePoll: null,
     });
-    vi.mocked(sendEventUpdate).mockResolvedValue({ success: true });
-    vi.mocked(sendEventCancellation).mockResolvedValue({ success: true });
     vi.mocked(sendAdhocSmsReminder).mockResolvedValue({ sent: 2, errors: [] });
   });
 
@@ -322,7 +332,7 @@ describe("dashboard.admin.events loader and UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /\+ Create Event/i }));
 
     expect(screen.getByRole("heading", { name: "Create New Event" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Restaurant Name *")).toHaveValue("");
+    expect(screen.getByLabelText("Restaurant *")).toHaveValue("");
     expect(screen.getByLabelText("Send calendar invites to all active members")).toBeChecked();
   });
 
@@ -367,6 +377,10 @@ describe("dashboard.admin.events loader and UI", () => {
                     email: "pat@example.com",
                     rsvp_status: "yes",
                     admin_override: 1,
+                    hasAcceptedCalendarDelivery: false,
+                    hasDeliveredCalendarDelivery: false,
+                    lastCalendarDeliveryStatus: null,
+                    lastCalendarDeliveryType: null,
                   },
                 ],
               },
@@ -377,12 +391,12 @@ describe("dashboard.admin.events loader and UI", () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByRole("button", { name: "Create from Vote Winners" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Prefill from Vote Leaders" })).toBeInTheDocument();
     expect(screen.getAllByText("Prime Steakhouse")).toHaveLength(2);
     expect(screen.getAllByText("123 Main St")).toHaveLength(2);
     expect(screen.getByText("formatted:2026-05-20")).toBeInTheDocument();
     expect(formatTimeForDisplay).toHaveBeenCalledWith("18:00");
-    expect(screen.getByText("Admin override")).toBeInTheDocument();
+    expect(screen.getAllByText("Admin override")).toHaveLength(2);
     expect(screen.getByText("Current RSVP: yes")).toBeInTheDocument();
 
     const recipientScope = document.querySelector('select[name="recipient_scope"]');
@@ -394,7 +408,7 @@ describe("dashboard.admin.events loader and UI", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
 
-    expect(screen.getByDisplayValue("Prime Steakhouse")).toBeInTheDocument();
+    expect(screen.getAllByDisplayValue("Prime Steakhouse")).toHaveLength(2);
     expect(screen.getByDisplayValue("123 Main St")).toBeInTheDocument();
     expect(screen.getByDisplayValue("2026-05-20")).toBeInTheDocument();
 
@@ -415,14 +429,8 @@ describe("dashboard.admin.events loader and UI", () => {
   });
 
   it("updates an event and schedules calendar updates for active members", async () => {
-    const db = createMockDb({
-      updateRecipients: [
-        { email: "alice@example.com", rsvp_status: "yes" },
-        { email: "bob@example.com", rsvp_status: null },
-      ],
-      eventMeta: { calendar_sequence: 6 },
-    });
-    const waitUntil = vi.fn();
+    const db = createMockDb();
+    const queue = { sendBatch: vi.fn().mockResolvedValue(undefined) };
 
     const response = await action({
       request: createRequest({
@@ -439,9 +447,9 @@ describe("dashboard.admin.events loader and UI", () => {
         cloudflare: {
           env: {
             DB: db,
-            RESEND_API_KEY: "test-api-key",
+            EMAIL_DELIVERY_QUEUE: queue,
           },
-          ctx: { waitUntil },
+          ctx: {},
         },
       } as never,
       params: {},
@@ -452,46 +460,18 @@ describe("dashboard.admin.events loader and UI", () => {
     expect(db.runCalls).toContainEqual(
       expect.objectContaining({
         sql: expect.stringContaining("UPDATE events"),
-        bindArgs: ["Updated Grill", "500 Market St", "2026-06-15", "18:00", "cancelled", 42],
+        bindArgs: ["Updated Grill", "500 Market St", "2026-06-15", "18:00", "cancelled", 5, 42],
       })
     );
-    expect(sendEventUpdate).toHaveBeenCalledTimes(2);
-    expect(sendEventUpdate).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        eventId: 42,
-        restaurantName: "Updated Grill",
-        eventDate: "2026-06-15",
-        eventTime: "18:00",
-        userEmail: "alice@example.com",
-        rsvpStatus: "yes",
-        sequence: 6,
-        resendApiKey: "test-api-key",
-      })
-    );
-    expect(sendEventUpdate).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        userEmail: "bob@example.com",
-        rsvpStatus: undefined,
-      })
-    );
-    expect(waitUntil).toHaveBeenCalledTimes(1);
-    expect(waitUntil.mock.calls[0]?.[0]).toBeInstanceOf(Promise);
+    expect(queue.sendBatch).toHaveBeenCalledWith([
+      { body: { deliveryId: 21 } },
+      { body: { deliveryId: 22 } },
+    ]);
   });
 
   it("deletes an event after scheduling cancellation notices", async () => {
-    const db = createMockDb({
-      deleteRecipients: [{ email: "alice@example.com" }, { email: "bob@example.com" }],
-      eventForDelete: {
-        id: 42,
-        restaurant_name: "Prime Steakhouse",
-        restaurant_address: "123 Main St",
-        event_date: "2026-05-20",
-        event_time: "18:00",
-        calendar_sequence: 4,
-      },
-    });
+    const db = createMockDb();
+    const queue = { sendBatch: vi.fn().mockResolvedValue(undefined) };
 
     const response = await action({
       request: createRequest({
@@ -502,7 +482,7 @@ describe("dashboard.admin.events loader and UI", () => {
         cloudflare: {
           env: {
             DB: db,
-            RESEND_API_KEY: "test-api-key",
+            EMAIL_DELIVERY_QUEUE: queue,
           },
         },
       } as never,
@@ -510,16 +490,10 @@ describe("dashboard.admin.events loader and UI", () => {
     } as never);
 
     expect((response as Response).status).toBe(302);
-    expect(sendEventCancellation).toHaveBeenCalledTimes(2);
-    expect(sendEventCancellation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventId: 42,
-        restaurantName: "Prime Steakhouse",
-        userEmail: "alice@example.com",
-        sequence: 5,
-        resendApiKey: "test-api-key",
-      })
-    );
+    expect(queue.sendBatch).toHaveBeenCalledWith([
+      { body: { deliveryId: 21 } },
+      { body: { deliveryId: 22 } },
+    ]);
     expect(db.runCalls).toContainEqual(
       expect.objectContaining({
         sql: "DELETE FROM events WHERE id = ?",

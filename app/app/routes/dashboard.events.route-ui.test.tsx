@@ -3,12 +3,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import EventsPage from "./dashboard.events";
 import type { Route } from "./+types/dashboard.events";
 
+let navigationState: { state: string; formData: FormData | null } = {
+  state: "idle",
+  formData: null,
+};
+
 vi.mock("react-router", async () => {
   const actual = await vi.importActual<typeof import("react-router")>("react-router");
 
   return {
     ...actual,
     Form: ({ children, preventScrollReset, ...props }: any) => <form {...props}>{children}</form>,
+    useNavigation: () => navigationState,
   };
 });
 
@@ -36,6 +42,7 @@ function renderEvents(
 describe("dashboard.events UI", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    navigationState = { state: "idle", formData: null };
   });
 
   it("renders multiple upcoming events as separate collapsed tiles", () => {

@@ -16,6 +16,10 @@ const variantClasses: Record<AlertVariant, string> = {
   info: "bg-accent/10 border-accent/25 text-accent",
 };
 
+/**
+ * Inline alert for contextual feedback.
+ * @example <Alert variant="error">Could not save changes.</Alert>
+ */
 export function Alert({ variant = "error", icon, className = "", children }: AlertProps) {
   return (
     <div className={`border rounded-lg px-4 py-3 flex items-start gap-3 ${variantClasses[variant]} ${className}`}>

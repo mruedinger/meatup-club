@@ -5,6 +5,10 @@ interface CardProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
 }
 
+/**
+ * Surface container for grouped content.
+ * @example <Card className="p-6">...</Card>
+ */
 export function Card({ hover = false, className = "", children, ...rest }: CardProps) {
   return (
     <div

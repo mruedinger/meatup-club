@@ -19,6 +19,26 @@ export type AuthUser = {
   sms_opt_out_at: string | null;
 };
 
+export type GoogleTokens = {
+  access_token: string;
+  token_type: string;
+  scope: string;
+  expires_in: number;
+  refresh_token?: string;
+  id_token?: string;
+};
+
+export type GoogleUserInfo = {
+  id: string;
+  email: string;
+  verified_email?: boolean;
+  name: string;
+  given_name?: string;
+  family_name?: string;
+  picture?: string;
+  locale?: string;
+};
+
 // Get current user from session
 export async function getUser(
   request: Request,
@@ -131,7 +151,7 @@ export function getGoogleAuthUrl(redirectUri: string, state: string): string {
 }
 
 // Exchange code for tokens
-export async function getGoogleTokens(code: string, redirectUri: string) {
+export async function getGoogleTokens(code: string, redirectUri: string): Promise<GoogleTokens> {
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: {
@@ -150,11 +170,12 @@ export async function getGoogleTokens(code: string, redirectUri: string) {
     throw new Error("Failed to exchange code for tokens");
   }
 
-  return response.json();
+  const payload = await response.json();
+  return payload as GoogleTokens;
 }
 
 // Get user info from Google
-export async function getGoogleUserInfo(accessToken: string) {
+export async function getGoogleUserInfo(accessToken: string): Promise<GoogleUserInfo> {
   const response = await fetch(
     "https://www.googleapis.com/oauth2/v2/userinfo",
     {
@@ -168,5 +189,6 @@ export async function getGoogleUserInfo(accessToken: string) {
     throw new Error("Failed to get user info");
   }
 
-  return response.json();
+  const payload = await response.json();
+  return payload as GoogleUserInfo;
 }

@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   sendCalendarUpdate,
   sendEventCancellation,
+  sendEventCancellationEmail,
+  sendEventInviteEmail,
   sendEventInvites,
+  sendEventUpdateEmail,
   sendEventUpdate,
   sendRsvpOverrideEmail,
 } from "./email.server";
@@ -156,6 +159,65 @@ describe("email.server advanced notification flows", () => {
     expect(secondIcs).toContain("mailto:ben@example.com");
   });
 
+  it("dispatches invite sends with bounded parallelism instead of waiting on each recipient sequentially", async () => {
+    const pendingResponses: Array<() => void> = [];
+    global.fetch = vi.fn().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          pendingResponses.push(() =>
+            resolve({
+              ok: true,
+              json: async () => ({ id: `email-${pendingResponses.length}` }),
+              text: async () => "OK",
+              statusText: "OK",
+            } as unknown as Response)
+          );
+        })
+    );
+
+    const sendPromise = sendEventInvites({
+      eventId: 7,
+      restaurantName: "Prime Steakhouse",
+      restaurantAddress: "123 Main St",
+      eventDate: "2026-04-10",
+      eventTime: "18:00",
+      recipientEmails: [
+        "one@example.com",
+        "two@example.com",
+        "three@example.com",
+        "four@example.com",
+        "five@example.com",
+        "six@example.com",
+        "seven@example.com",
+      ],
+      resendApiKey: "test-api-key",
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(global.fetch).toHaveBeenCalledTimes(6);
+
+    const firstWave = pendingResponses.splice(0, 6);
+    for (const resolve of firstWave) {
+      resolve();
+    }
+
+    await vi.waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledTimes(7);
+    });
+
+    const finalResponse = pendingResponses.shift();
+    expect(finalResponse).toBeTypeOf("function");
+    finalResponse?.();
+
+    await expect(sendPromise).resolves.toEqual({
+      success: true,
+      sentCount: 7,
+      errors: [],
+    });
+  });
+
   it("collects redacted invite errors and continues sending remaining recipients", async () => {
     global.fetch = vi
       .fn()
@@ -183,7 +245,7 @@ describe("email.server advanced notification flows", () => {
 
     expect(result.success).toBe(false);
     expect(result.sentCount).toBe(1);
-    expect(result.errors).toEqual(["zo***@example.com: Rate Limited"]);
+    expect(result.errors).toEqual(["zo***@example.com: Failed to send email: Rate Limited"]);
   });
 
   it("attaches RSVP calendar updates with the mapped PARTSTAT", async () => {
@@ -251,6 +313,62 @@ describe("email.server advanced notification flows", () => {
     expect(ics).toContain("PARTSTAT=NEEDS-ACTION");
   });
 
+  it("returns the provider message id and sends the idempotency key for durable event updates", async () => {
+    const result = await sendEventUpdateEmail({
+      eventId: 10,
+      restaurantName: "Prime Steakhouse",
+      restaurantAddress: "789 Pine Rd",
+      eventDate: "2026-04-13",
+      eventTime: "18:15",
+      userEmail: "member@example.com",
+      sequence: 3,
+      resendApiKey: "test-api-key",
+      idempotencyKey: "update:10:3:1",
+    });
+
+    expect(result).toEqual({
+      success: true,
+      providerMessageId: "email-123",
+    });
+
+    const [, requestInit] = vi.mocked(global.fetch).mock.calls[0];
+    expect(requestInit?.headers).toEqual(
+      expect.objectContaining({
+        "Idempotency-Key": "update:10:3:1",
+      })
+    );
+  });
+
+  it("returns retry-after metadata for durable event invite rate limits", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      headers: new Headers({
+        "retry-after": "5",
+      }),
+      text: async () => "slow down",
+    } as unknown as Response);
+
+    const result = await sendEventInviteEmail({
+      eventId: 10,
+      restaurantName: "Prime Steakhouse",
+      restaurantAddress: "789 Pine Rd",
+      eventDate: "2026-04-13",
+      eventTime: "18:15",
+      userEmail: "member@example.com",
+      resendApiKey: "test-api-key",
+      idempotencyKey: "invite:10:0:1",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: "Failed to send email: Too Many Requests",
+      retryable: true,
+      retryAfterSeconds: 5,
+    });
+  });
+
   it("sends event cancellation notices with CANCEL calendar attachments", async () => {
     const result = await sendEventCancellation({
       eventId: 11,
@@ -277,5 +395,31 @@ describe("email.server advanced notification flows", () => {
     expect(ics).toContain("METHOD:CANCEL");
     expect(ics).toContain("STATUS:CANCELLED");
     expect(ics).toContain("SEQUENCE:4");
+  });
+
+  it("returns the provider message id and sends the idempotency key for durable cancellations", async () => {
+    const result = await sendEventCancellationEmail({
+      eventId: 11,
+      restaurantName: "Prime Steakhouse",
+      restaurantAddress: null,
+      eventDate: "2026-04-14",
+      eventTime: "18:00",
+      userEmail: "member@example.com",
+      sequence: 4,
+      resendApiKey: "test-api-key",
+      idempotencyKey: "cancel:11:4:1",
+    });
+
+    expect(result).toEqual({
+      success: true,
+      providerMessageId: "email-123",
+    });
+
+    const [, requestInit] = vi.mocked(global.fetch).mock.calls[0];
+    expect(requestInit?.headers).toEqual(
+      expect.objectContaining({
+        "Idempotency-Key": "cancel:11:4:1",
+      })
+    );
   });
 });

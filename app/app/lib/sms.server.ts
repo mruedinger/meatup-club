@@ -19,6 +19,12 @@ export type SmsEvent = {
 
 export type SmsRecipientScope = "all" | "yes" | "no" | "maybe" | "pending" | "specific";
 
+type SmsRecipientRow = {
+  id: number;
+  phone_number: string;
+  rsvp_status: string | null;
+};
+
 const OPT_OUT_KEYWORDS = new Set(["stop", "stopall", "unsubscribe", "cancel", "end", "quit"]);
 const HELP_KEYWORDS = new Set(["help", "info"]);
 const YES_KEYWORDS = new Set(["y", "yes"]);
@@ -212,9 +218,9 @@ export async function sendScheduledSmsReminders({
         .bind(event.id, event.id, target.type)
         .all();
 
-      for (const recipient of recipients.results || []) {
-        const to = (recipient as any).phone_number as string;
-        const rsvpStatus = (recipient as any).rsvp_status as string | null;
+      for (const recipient of (recipients.results || []) as SmsRecipientRow[]) {
+        const to = recipient.phone_number;
+        const rsvpStatus = recipient.rsvp_status;
         const body = buildSmsReminderMessage({
           event,
           timeZone,
@@ -227,7 +233,7 @@ export async function sendScheduledSmsReminders({
             .prepare(
               "INSERT OR IGNORE INTO sms_reminders (event_id, user_id, reminder_type) VALUES (?, ?, ?)"
             )
-            .bind(event.id, (recipient as any).id, target.type)
+            .bind(event.id, recipient.id, target.type)
             .run();
         } else {
           console.error(`SMS reminder failed for ${to}: ${result.error}`);
@@ -276,9 +282,9 @@ export async function sendAdhocSmsReminder({
   let sent = 0;
   const errors: string[] = [];
 
-  for (const recipient of recipients.results || []) {
-    const to = (recipient as any).phone_number as string;
-    const rsvpStatus = (recipient as any).rsvp_status as string | null;
+  for (const recipient of (recipients.results || []) as SmsRecipientRow[]) {
+    const to = recipient.phone_number;
+    const rsvpStatus = recipient.rsvp_status;
     const message = buildSmsReminderMessage({
       event,
       timeZone,
@@ -292,7 +298,7 @@ export async function sendAdhocSmsReminder({
         .prepare(
           "INSERT OR IGNORE INTO sms_reminders (event_id, user_id, reminder_type) VALUES (?, ?, ?)"
         )
-        .bind(event.id, (recipient as any).id, reminderType)
+        .bind(event.id, recipient.id, reminderType)
         .run();
     } else {
       errors.push(`${to}: ${result.error}`);

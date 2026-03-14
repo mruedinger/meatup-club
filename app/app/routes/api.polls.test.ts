@@ -1,19 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { action, loader } from "./api.polls";
 import { requireActiveUser } from "../lib/auth.server";
-import { closePoll } from "../lib/polls.server";
 
 vi.mock("../lib/auth.server", () => ({
   requireActiveUser: vi.fn(),
 }));
-
-vi.mock("../lib/polls.server", async () => {
-  const actual = await vi.importActual<typeof import("../lib/polls.server")>("../lib/polls.server");
-  return {
-    ...actual,
-    closePoll: vi.fn(),
-  };
-});
 
 type MockDbOptions = {
   loaderActivePoll?: Record<string, unknown> | null;
@@ -26,6 +17,7 @@ type MockDbOptions = {
   closeChanges?: number;
   eventId?: number;
   failOn?: "insert_event" | "close_update" | null;
+  failOnRawTransactions?: boolean;
 };
 
 function createMockDb({
@@ -39,12 +31,14 @@ function createMockDb({
   closeChanges = 1,
   eventId = 222,
   failOn = null,
+  failOnRawTransactions = false,
 }: MockDbOptions = {}) {
   const runCalls: Array<{ sql: string; bindArgs: unknown[] }> = [];
   const pollQueue = [...pollByIdResponses];
 
   const prepare = vi.fn((sql: string) => {
     const normalizedSql = sql.replace(/\s+/g, " ").trim();
+    const isSelectStatement = normalizedSql.startsWith("SELECT");
 
     const firstForArgs = async (_bindArgs: unknown[]) => {
       if (normalizedSql.includes("SELECT * FROM polls WHERE status = 'active'")) {
@@ -71,23 +65,26 @@ function createMockDb({
         return pollQueue.shift() ?? null;
       }
 
+      if (normalizedSql === "SELECT created_event_id FROM polls WHERE id = ?") {
+        return { created_event_id: eventId };
+      }
+
       throw new Error(`Unexpected first() query: ${normalizedSql}`);
     };
 
+    const allForArgs = async (_bindArgs: unknown[]) => ({ results: [] });
+
     const runForArgs = async (bindArgs: unknown[]) => {
+      if (
+        failOnRawTransactions &&
+        (normalizedSql === "BEGIN TRANSACTION" ||
+          normalizedSql === "COMMIT" ||
+          normalizedSql === "ROLLBACK")
+      ) {
+        throw new Error("D1 does not support raw SQL transactions");
+      }
+
       runCalls.push({ sql: normalizedSql, bindArgs });
-
-      if (normalizedSql === "BEGIN TRANSACTION") {
-        return { meta: { changes: 0 } };
-      }
-
-      if (normalizedSql === "COMMIT") {
-        return { meta: { changes: 0 } };
-      }
-
-      if (normalizedSql === "ROLLBACK") {
-        return { meta: { changes: 0 } };
-      }
 
       if (normalizedSql.includes("INSERT INTO polls")) {
         return { meta: { last_row_id: createdPollId } };
@@ -98,7 +95,7 @@ function createMockDb({
           throw new Error("event insert failed");
         }
 
-        return { meta: { last_row_id: eventId } };
+        return { meta: { changes: 1, last_row_id: eventId } };
       }
 
       if (normalizedSql.includes("UPDATE polls") && normalizedSql.includes("WHERE id = ? AND status = 'active'")) {
@@ -114,15 +111,40 @@ function createMockDb({
 
     return {
       first: () => firstForArgs([]),
-      run: () => runForArgs([]),
+      all: () => allForArgs([]),
+      ...(isSelectStatement ? {} : { run: () => runForArgs([]) }),
       bind: (...bindArgs: unknown[]) => ({
         first: () => firstForArgs(bindArgs),
-        run: () => runForArgs(bindArgs),
+        all: () => allForArgs(bindArgs),
+        ...(isSelectStatement ? {} : { run: () => runForArgs(bindArgs) }),
       }),
     };
   });
 
-  return { prepare, runCalls };
+  const batch = vi.fn(async (statements: Array<{
+    run?: () => Promise<unknown>;
+    all?: () => Promise<unknown>;
+  }>) => {
+    const results = [];
+
+    for (const statement of statements) {
+      if (typeof statement.run === "function") {
+        results.push(await statement.run());
+        continue;
+      }
+
+      if (typeof statement.all === "function") {
+        results.push(await statement.all());
+        continue;
+      }
+
+      results.push({});
+    }
+
+    return results;
+  });
+
+  return { prepare, runCalls, batch };
 }
 
 function createRequest(formEntries?: Record<string, string>) {
@@ -144,10 +166,6 @@ function createRequest(formEntries?: Record<string, string>) {
 describe("api.polls route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(closePoll).mockResolvedValue({
-      ok: true,
-      eventId: null,
-    });
   });
 
   it("returns the active poll from the loader", async () => {
@@ -293,18 +311,15 @@ describe("api.polls route", () => {
     });
   });
 
-  it("uses the shared close helper when closing a poll with event creation", async () => {
+  it("creates an event through D1 batch statements when closing a poll", async () => {
     vi.mocked(requireActiveUser).mockResolvedValue({
       id: 99,
       is_admin: 1,
       status: "active",
       email: "admin@example.com",
     } as never);
-    vi.mocked(closePoll).mockResolvedValue({
-      ok: true,
-      eventId: 333,
-    });
     const db = createMockDb({
+      failOnRawTransactions: true,
       pollByIdResponses: [
         {
           id: 1,
@@ -339,30 +354,33 @@ describe("api.polls route", () => {
       },
       eventId: 333,
     });
-    expect(closePoll).toHaveBeenCalledWith({
-      db,
-      pollId: 1,
-      closedByUserId: 99,
-      winningRestaurantId: 9,
-      winningDateId: 17,
-      event: {
-        restaurantName: "Steak House",
-        restaurantAddress: "123 Main",
-        eventDate: "2026-05-01",
-        eventTime: "18:00",
-      },
-    });
+    expect(db.batch).toHaveBeenCalledTimes(1);
+    expect(db.runCalls).toEqual([
+      expect.objectContaining({
+        sql: expect.stringContaining("INSERT INTO events"),
+        bindArgs: ["Steak House", "123 Main", "2026-05-01", "18:00", "upcoming", 99, 1],
+      }),
+      expect.objectContaining({
+        sql: "UPDATE polls SET status = 'closed', closed_by = ?, closed_at = CURRENT_TIMESTAMP, winning_restaurant_id = ?, winning_date_id = ?, created_event_id = last_insert_rowid() WHERE id = ? AND status = 'active'",
+        bindArgs: [99, 9, 17, 1],
+      }),
+    ]);
+    expect(db.runCalls).not.toContainEqual(
+      expect.objectContaining({ sql: "BEGIN TRANSACTION" })
+    );
   });
 
-  it("returns a server error when the shared close helper fails", async () => {
+  it("returns a server error when batch-based event close cannot claim the poll", async () => {
     vi.mocked(requireActiveUser).mockResolvedValue({
       id: 99,
       is_admin: 1,
       status: "active",
       email: "admin@example.com",
     } as never);
-    vi.mocked(closePoll).mockRejectedValue(new Error("d1 failure"));
-    const db = createMockDb({ pollByIdResponses: [] });
+    const db = createMockDb({
+      failOn: "close_update",
+      pollByIdResponses: [],
+    });
 
     const response = await action({
       request: createRequest({
@@ -378,20 +396,27 @@ describe("api.polls route", () => {
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: "Failed to close poll" });
+    expect(db.runCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sql: "UPDATE polls SET status = 'closed', closed_by = ?, closed_at = CURRENT_TIMESTAMP, winning_restaurant_id = ?, winning_date_id = ?, created_event_id = last_insert_rowid() WHERE id = ? AND status = 'active'",
+          bindArgs: [99, 9, 17, 1],
+        }),
+      ])
+    );
+    expect(db.runCalls).not.toContainEqual(
+      expect.objectContaining({ sql: "ROLLBACK" })
+    );
   });
 
-  it("returns a conflict when the shared close helper reports the poll is no longer active", async () => {
+  it("returns a conflict when a non-transactional close updates no rows", async () => {
     vi.mocked(requireActiveUser).mockResolvedValue({
       id: 99,
       is_admin: 1,
       status: "active",
       email: "admin@example.com",
     } as never);
-    vi.mocked(closePoll).mockResolvedValue({
-      ok: false,
-      reason: "conflict",
-    });
-    const db = createMockDb();
+    const db = createMockDb({ closeChanges: 0 });
 
     const response = await action({
       request: createRequest({

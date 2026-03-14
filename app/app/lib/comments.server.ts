@@ -129,6 +129,8 @@ async function deleteCommentAndReplies(
   db: D1Database,
   commentId: number
 ): Promise<void> {
+  type ReplyIdRow = { id: number };
+
   // Get all direct replies
   const replies = await db
     .prepare('SELECT id FROM comments WHERE parent_id = ?')
@@ -136,8 +138,8 @@ async function deleteCommentAndReplies(
     .all();
 
   // Delete all replies recursively
-  for (const reply of (replies.results || [])) {
-    await deleteCommentAndReplies(db, (reply as any).id);
+  for (const reply of (replies.results || []) as ReplyIdRow[]) {
+    await deleteCommentAndReplies(db, reply.id);
   }
 
   // Delete the comment itself

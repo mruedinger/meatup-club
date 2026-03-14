@@ -1,15 +1,139 @@
 import { Form, Link, redirect, useNavigation, useSubmit } from "react-router";
 import { useEffect, useRef, useState } from "react";
+import type { D1Result } from "@cloudflare/workers-types";
 import type { Route } from "./+types/dashboard.admin.events";
 import { requireAdmin } from "../lib/auth.server";
 import { logActivity } from "../lib/activity.server";
+import {
+  buildCreateEventStatement,
+  buildDeleteEventStatement,
+  buildSelectLastInsertedEventIdStatement,
+  buildUpdateEventStatement,
+  getInsertedEventIdFromQueryResult,
+  getEditableEventById,
+  parseEventMutationFormData,
+} from "../lib/events.server";
+import {
+  buildSelectStagedDeliveryIdsStatement,
+  buildStageEventCancellationDeliveriesForActiveMembersStatement,
+  buildStageEventInviteDeliveriesForLastInsertedEventStatement,
+  buildStageEventUpdateDeliveriesForActiveMembersStatement,
+  buildStageEventUpdateDeliveriesStatement,
+  enqueueStagedEventEmailBatch,
+  getActiveMemberIdsWithoutAcceptedEventEmailDelivery,
+  listEventEmailRecipientDeliveryHistory,
+  toStagedEventEmailBatchFromQueryResult,
+  type EventEmailDeliveryStatus,
+  type StagedEventEmailBatch,
+} from "../lib/event-email-delivery.server";
 import VoteLeadersCard from "../components/VoteLeadersCard";
+import { EventRestaurantFields } from "../components/EventRestaurantFields";
 import { getActivePollLeaders } from "../lib/polls.server";
 import { formatDateForDisplay, formatTimeForDisplay, getAppTimeZone, isEventInPastInTimeZone } from "../lib/dateUtils";
 import { sendAdhocSmsReminder } from "../lib/sms.server";
+import type { SmsEvent, SmsRecipientScope } from "../lib/sms.server";
 import { Alert, Badge, Button, Card, EmptyState, PageHeader } from "../components/ui";
-import type { Event, VoteWinner, DateWinner } from "../lib/types";
+import type { VoteWinner, DateWinner } from "../lib/types";
 import { AdminLayout } from "../components/AdminLayout";
+import { confirmAction } from "../lib/confirm.client";
+
+interface AdminEventRow {
+  id: number;
+  restaurant_name: string;
+  restaurant_address: string | null;
+  event_date: string;
+  event_time: string | null;
+  status: string;
+  calendar_sequence?: number | null;
+  created_at: string;
+  displayStatus?: 'upcoming' | 'completed' | 'cancelled';
+}
+
+interface SmsMemberRow {
+  id: number;
+  name: string | null;
+  email: string;
+}
+
+interface RsvpLookupRow {
+  event_id: number;
+  user_id: number;
+  status: string | null;
+  admin_override: number;
+  name: string | null;
+  email: string;
+}
+
+interface ActiveMemberRow {
+  id: number;
+  name: string | null;
+  email: string;
+}
+
+interface EventMembersRow extends ActiveMemberRow {
+  rsvp_status: string | null;
+  admin_override: number;
+  hasAcceptedCalendarDelivery: boolean;
+  hasDeliveredCalendarDelivery: boolean;
+  lastCalendarDeliveryStatus: EventEmailDeliveryStatus | null;
+  lastCalendarDeliveryType: "invite" | "update" | "cancel" | null;
+}
+
+interface EventForNotificationRow {
+  id: number;
+  restaurant_name: string;
+  restaurant_address: string | null;
+  event_date: string;
+  event_time: string | null;
+  calendar_sequence: number | null;
+}
+
+interface TargetUserRow {
+  id: number;
+  name: string | null;
+  email: string;
+}
+
+function parseRecipientUserIds(formData: FormData): number[] {
+  return Array.from(
+    new Set(
+      formData
+        .getAll("recipient_user_ids")
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    )
+  ).sort((left, right) => left - right);
+}
+
+function getCalendarDeliveryBadge(member: EventMembersRow): {
+  label: string;
+  variant: "accent" | "success" | "danger" | "warning" | "muted";
+} {
+  if (member.hasDeliveredCalendarDelivery) {
+    return { label: "Delivered", variant: "success" };
+  }
+
+  if (member.hasAcceptedCalendarDelivery) {
+    return { label: "Accepted", variant: "accent" };
+  }
+
+  switch (member.lastCalendarDeliveryStatus) {
+    case "delivery_delayed":
+      return { label: "Delayed", variant: "warning" };
+    case "retry":
+      return { label: "Retrying", variant: "warning" };
+    case "failed":
+    case "bounced":
+    case "complained":
+      return { label: "Failed", variant: "danger" };
+    case "sending":
+      return { label: "Sending", variant: "accent" };
+    case "pending":
+      return { label: "Pending", variant: "muted" };
+    default:
+      return { label: "No accepted send", variant: "muted" };
+  }
+}
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   await requireAdmin(request, context);
@@ -20,7 +144,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .prepare('SELECT * FROM events ORDER BY event_date DESC')
     .all();
   const appTimeZone = getAppTimeZone(context.cloudflare.env.APP_TIMEZONE);
-  const eventsWithDisplayStatus = (eventsResult.results || []).map((event: any) => ({
+  const events = (eventsResult.results || []) as unknown as AdminEventRow[];
+  const eventsWithDisplayStatus = events.map((event) => ({
     ...event,
     displayStatus: event.status === 'cancelled'
       ? 'cancelled'
@@ -29,65 +154,97 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         : 'upcoming',
   }));
 
-  const smsMembersResult = await db
-    .prepare(`
-      SELECT id, name, email
-      FROM users
-      WHERE status = 'active'
-        AND sms_opt_in = 1
-        AND sms_opt_out_at IS NULL
-        AND phone_number IS NOT NULL
-      ORDER BY name ASC, email ASC
-    `)
-    .all();
+  const [
+    smsMembersResult,
+    rsvpRowsResult,
+    activeMembersResult,
+    deliveryHistory,
+    voteLeaders,
+  ] = await Promise.all([
+    db
+      .prepare(`
+        SELECT id, name, email
+        FROM users
+        WHERE status = 'active'
+          AND sms_opt_in = 1
+          AND sms_opt_out_at IS NULL
+          AND phone_number IS NOT NULL
+        ORDER BY name ASC, email ASC
+      `)
+      .all(),
+    db
+      .prepare(`
+        SELECT
+          r.event_id,
+          r.user_id,
+          r.status,
+          r.admin_override,
+          u.name,
+          u.email
+        FROM rsvps r
+        JOIN users u ON r.user_id = u.id
+      `)
+      .all(),
+    db
+      .prepare('SELECT id, name, email FROM users WHERE status = ? ORDER BY name ASC, email ASC')
+      .bind('active')
+      .all(),
+    listEventEmailRecipientDeliveryHistory(db),
+    getActivePollLeaders(db),
+  ]);
 
-  const rsvpRowsResult = await db
-    .prepare(`
-      SELECT
-        r.event_id,
-        r.user_id,
-        r.status,
-        r.admin_override,
-        u.name,
-        u.email
-      FROM rsvps r
-      JOIN users u ON r.user_id = u.id
-    `)
-    .all();
-
-  const activeMembersResult = await db
-    .prepare('SELECT id, name, email FROM users WHERE status = ? ORDER BY name ASC, email ASC')
-    .bind('active')
-    .all();
-
-  const activeMembers = activeMembersResult.results || [];
-  const rsvpLookup = new Map<string, any>();
-  for (const row of rsvpRowsResult.results || []) {
-    const key = `${(row as any).event_id}:${(row as any).user_id}`;
+  const smsMembers = (smsMembersResult.results || []) as unknown as SmsMemberRow[];
+  const rsvpRows = (rsvpRowsResult.results || []) as unknown as RsvpLookupRow[];
+  const activeMembers = (activeMembersResult.results || []) as unknown as ActiveMemberRow[];
+  const rsvpLookup = new Map<string, RsvpLookupRow>();
+  for (const row of rsvpRows) {
+    const key = `${row.event_id}:${row.user_id}`;
     rsvpLookup.set(key, row);
   }
 
-  const eventMembersById: Record<number, any[]> = {};
-  for (const event of eventsResult.results || []) {
-    eventMembersById[(event as any).id] = activeMembers.map((member: any) => {
-      const key = `${(event as any).id}:${member.id}`;
-      const rsvp = rsvpLookup.get(key) as any;
+  const deliveryHistoryLookup = new Map<
+    string,
+    {
+      hasAcceptedDelivery: boolean;
+      hasDeliveredDelivery: boolean;
+      latestStatus: EventEmailDeliveryStatus | null;
+      latestDeliveryType: "invite" | "update" | "cancel" | null;
+    }
+  >();
+  for (const row of deliveryHistory) {
+    const key = `${row.eventId}:${row.userId}`;
+    deliveryHistoryLookup.set(key, {
+      hasAcceptedDelivery: row.hasAcceptedDelivery,
+      hasDeliveredDelivery: row.hasDeliveredDelivery,
+      latestStatus: row.latestStatus,
+      latestDeliveryType: row.latestDeliveryType,
+    });
+  }
+
+  const eventMembersById: Record<number, EventMembersRow[]> = {};
+  for (const event of events) {
+    eventMembersById[event.id] = activeMembers.map((member) => {
+      const key = `${event.id}:${member.id}`;
+      const rsvp = rsvpLookup.get(key);
+      const deliveryHistoryRow = deliveryHistoryLookup.get(key);
       return {
         ...member,
         rsvp_status: rsvp?.status || null,
         admin_override: rsvp?.admin_override || 0,
+        hasAcceptedCalendarDelivery: deliveryHistoryRow?.hasAcceptedDelivery || false,
+        hasDeliveredCalendarDelivery: deliveryHistoryRow?.hasDeliveredDelivery || false,
+        lastCalendarDeliveryStatus: deliveryHistoryRow?.latestStatus || null,
+        lastCalendarDeliveryType: deliveryHistoryRow?.latestDeliveryType || null,
       };
     });
   }
-
-  // Get vote leaders from shared utility
-  const { topRestaurant, topDate } = await getActivePollLeaders(db);
+  const { topRestaurant, topDate } = voteLeaders;
 
   return {
     events: eventsWithDisplayStatus,
     topRestaurant,
     topDate,
-    smsMembers: smsMembersResult.results || [],
+    smsMembers,
     eventMembersById,
   };
 }
@@ -97,65 +254,66 @@ export async function action({ request, context }: Route.ActionArgs) {
   const db = context.cloudflare.env.DB;
   const formData = await request.formData();
   const actionType = formData.get('_action');
+  const queueContext = {
+    db,
+    queue: context.cloudflare.env.EMAIL_DELIVERY_QUEUE,
+  };
 
   if (actionType === 'create') {
-    const restaurant_name = formData.get('restaurant_name');
-    const restaurant_address = formData.get('restaurant_address');
-    const event_date = formData.get('event_date');
-    const event_time = formData.get('event_time') || '18:00'; // Default to 6 PM
     const send_invites = formData.get('send_invites') === 'true';
-
-    if (!restaurant_name || !event_date) {
-      return { error: 'Restaurant name and date are required' };
+    const parsed = parseEventMutationFormData(formData);
+    if (parsed.error || !parsed.value) {
+      return { error: parsed.error || 'Failed to create event' };
     }
 
+    const input = parsed.value;
+
     try {
-      const result = await db
-        .prepare('INSERT INTO events (restaurant_name, restaurant_address, event_date, event_time, status) VALUES (?, ?, ?, ?, ?)')
-        .bind(restaurant_name, restaurant_address || null, event_date, event_time, 'upcoming')
-        .run();
+      let eventId = 0;
+      let stagedInviteBatch: StagedEventEmailBatch | null = null;
+      const createBatchId = send_invites ? crypto.randomUUID() : null;
+      const createStatements = [
+        buildCreateEventStatement(db, input, admin.id),
+        buildSelectLastInsertedEventIdStatement(db),
+      ];
 
-      const eventId = result.meta.last_row_id;
+      if (createBatchId) {
+        createStatements.push(
+          buildStageEventInviteDeliveriesForLastInsertedEventStatement(db, {
+            batchId: createBatchId,
+            details: {
+              restaurantName: input.restaurantName,
+              restaurantAddress: input.restaurantAddress,
+              eventDate: input.eventDate,
+              eventTime: input.eventTime,
+            },
+          }),
+          buildSelectStagedDeliveryIdsStatement(db, createBatchId)
+        );
+      }
 
-      // Send calendar invites if requested
-      if (send_invites && eventId) {
-        const { sendEventInvites } = await import('../lib/email.server');
+      const createResults = await db.batch(createStatements);
+      eventId = getInsertedEventIdFromQueryResult(
+        createResults[1] as D1Result<{ id: number }>
+      ) || 0;
 
-        // Get all active users
-        const usersResult = await db
-          .prepare("SELECT email FROM users WHERE status = 'active'")
-          .all();
+      if (!eventId) {
+        throw new Error('Failed to determine created event id');
+      }
 
-        const recipientEmails = (usersResult.results || []).map((u: any) => u.email);
+      if (createBatchId) {
+        stagedInviteBatch = toStagedEventEmailBatchFromQueryResult(
+          createBatchId,
+          'invite',
+          createResults[createResults.length - 1] as D1Result<{ id: number }>
+        );
+      }
 
-        if (recipientEmails.length > 0) {
-          const resendApiKey = context.cloudflare.env.RESEND_API_KEY || "";
-
-          // Use waitUntil if available for background processing
-          const invitePromise = sendEventInvites({
-            eventId: Number(eventId),
-            restaurantName: restaurant_name as string,
-            restaurantAddress: restaurant_address as string | null,
-            eventDate: event_date as string,
-            eventTime: event_time as string,
-            recipientEmails,
-            resendApiKey,
-          }).then(result => {
-            console.log(`Calendar invites sent: ${result.sentCount}/${recipientEmails.length}`);
-            if (result.errors.length > 0) {
-              console.error('Some invites failed:', result.errors);
-            }
-            return result;
-          }).catch(err => {
-            console.error('Failed to send calendar invites:', err);
-          });
-
-          if (context.cloudflare.ctx?.waitUntil) {
-            context.cloudflare.ctx.waitUntil(invitePromise);
-          } else {
-            await invitePromise;
-          }
-        }
+      try {
+        await enqueueStagedEventEmailBatch(queueContext, stagedInviteBatch);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('Failed to enqueue staged event invite deliveries', { eventId, message });
       }
 
       return redirect('/dashboard/admin/events');
@@ -182,12 +340,12 @@ export async function action({ request, context }: Route.ActionArgs) {
     const event = await db
       .prepare('SELECT id, restaurant_name, event_date, event_time FROM events WHERE id = ?')
       .bind(eventId)
-      .first();
+      .first() as Pick<EventForNotificationRow, "id" | "restaurant_name" | "event_date" | "event_time"> | null;
 
     const targetUser = await db
       .prepare('SELECT id, name, email FROM users WHERE id = ?')
       .bind(userId)
-      .first();
+      .first() as TargetUserRow | null;
 
     if (!event || !targetUser) {
       return { error: 'Event or user not found' };
@@ -233,17 +391,17 @@ export async function action({ request, context }: Route.ActionArgs) {
     if (resendApiKey) {
       const { sendRsvpOverrideEmail } = await import('../lib/email.server');
       const emailPromise = sendRsvpOverrideEmail({
-        to: (targetUser as any).email,
-        recipientName: (targetUser as any).name || null,
+        to: targetUser.email,
+        recipientName: targetUser.name || null,
         adminName: admin.name || admin.email,
-        eventName: (event as any).restaurant_name,
-        eventDate: formatDateForDisplay((event as any).event_date, {
+        eventName: event.restaurant_name,
+        eventDate: formatDateForDisplay(event.event_date, {
           weekday: 'long',
           year: 'numeric',
           month: 'long',
           day: 'numeric',
         }),
-        eventTime: formatTimeForDisplay((event as any).event_time || '18:00'),
+        eventTime: formatTimeForDisplay(event.event_time || '18:00'),
         rsvpStatus: status,
         eventUrl: 'https://meatup.club/dashboard/events',
         resendApiKey,
@@ -264,96 +422,228 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   if (actionType === 'update') {
     const id = formData.get('id');
-    const restaurant_name = formData.get('restaurant_name');
-    const restaurant_address = formData.get('restaurant_address');
-    const event_date = formData.get('event_date');
-    const event_time = (formData.get('event_time') as string) || '18:00';
-    const status = formData.get('status');
     const send_updates = formData.get('send_updates') === 'true';
+    const parsed = parseEventMutationFormData(formData, { allowCancelled: true });
 
-    if (!id || !restaurant_name || !event_date) {
-      return { error: 'ID, restaurant name and date are required' };
+    if (!id) {
+      return { error: 'Event ID is required' };
     }
 
-    const normalizedStatus = status === 'cancelled' ? 'cancelled' : 'upcoming';
+    if (parsed.error || !parsed.value) {
+      return { error: parsed.error || 'Failed to update event' };
+    }
+
+    const input = parsed.value;
 
     try {
-      // Update the event and increment calendar sequence for updates
       const eventId = Number(id);
-      await db
-        .prepare(`
-          UPDATE events
-          SET restaurant_name = ?,
-              restaurant_address = ?,
-              event_date = ?,
-              event_time = ?,
-              status = ?,
-              calendar_sequence = COALESCE(calendar_sequence, 0) + 1
-          WHERE id = ?
-        `)
-        .bind(restaurant_name, restaurant_address || null, event_date, event_time, normalizedStatus, eventId)
-        .run();
+      const existingEvent = await getEditableEventById(db, eventId);
+      if (!existingEvent) {
+        return { error: 'Event not found' };
+      }
 
-      // Send calendar updates if requested
-      if (send_updates) {
-        const { sendEventUpdate } = await import('../lib/email.server');
+      const nextSequence = Number(existingEvent.calendar_sequence ?? 0) + 1;
+      let stagedUpdateBatch: StagedEventEmailBatch | null = null;
+      const updateBatchId = send_updates ? crypto.randomUUID() : null;
+      const updateStatements = [
+        buildUpdateEventStatement(db, eventId, input, nextSequence),
+      ];
 
-        // Get all active users and their RSVP status for this event
-        const usersResult = await db
-          .prepare(`
-            SELECT u.email, r.status as rsvp_status
-            FROM users u
-            LEFT JOIN rsvps r ON r.user_id = u.id AND r.event_id = ?
-            WHERE u.status = 'active'
-          `)
-          .bind(eventId)
-          .all();
-
-        if (usersResult.results && usersResult.results.length > 0) {
-          const resendApiKey = context.cloudflare.env.RESEND_API_KEY || "";
-          const eventMeta = await db
-            .prepare('SELECT calendar_sequence FROM events WHERE id = ?')
-            .bind(eventId)
-            .first();
-          const calendarSequence = Number((eventMeta as any)?.calendar_sequence ?? 1);
-
-          const updatePromises = usersResult.results.map((user: any) =>
-            sendEventUpdate({
+      if (updateBatchId) {
+        updateStatements.push(
+          buildStageEventUpdateDeliveriesForActiveMembersStatement(db, {
+            batchId: updateBatchId,
+            details: {
               eventId,
-              restaurantName: restaurant_name as string,
-              restaurantAddress: restaurant_address as string | null,
-              eventDate: event_date as string,
-              eventTime: event_time,
-              userEmail: user.email,
-              rsvpStatus: user.rsvp_status || undefined,
-              sequence: calendarSequence,
-              resendApiKey,
-            }).catch(err => {
-              console.error(`Failed to send event update to ${user.email}:`, err);
-              return { success: false, error: err.message };
-            })
-          );
+              restaurantName: input.restaurantName,
+              restaurantAddress: input.restaurantAddress,
+              eventDate: input.eventDate,
+              eventTime: input.eventTime,
+            },
+            calendarSequence: nextSequence,
+          }),
+          buildSelectStagedDeliveryIdsStatement(db, updateBatchId)
+        );
+      }
 
-          // Use waitUntil if available for background processing
-          const allUpdates = Promise.all(updatePromises).then(results => {
-            const successCount = results.filter((r: { success: boolean }) => r.success).length;
-            const failureCount = results.filter((r: { success: boolean }) => !r.success).length;
-            console.log(`Calendar updates sent: ${successCount} succeeded, ${failureCount} failed`);
-            return results;
-          });
+      const updateResults = await db.batch(updateStatements);
 
-          if (context.cloudflare.ctx?.waitUntil) {
-            context.cloudflare.ctx.waitUntil(allUpdates);
-          } else {
-            await allUpdates;
-          }
-        }
+      if (updateBatchId) {
+        stagedUpdateBatch = toStagedEventEmailBatchFromQueryResult(
+          updateBatchId,
+          'update',
+          updateResults[updateResults.length - 1] as D1Result<{ id: number }>
+        );
+      }
+
+      try {
+        await enqueueStagedEventEmailBatch(queueContext, stagedUpdateBatch);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('Failed to enqueue staged event update deliveries', { eventId, message });
       }
 
       return redirect('/dashboard/admin/events');
     } catch (err) {
       console.error('Event update error:', err);
       return { error: 'Failed to update event' };
+    }
+  }
+
+  if (actionType === 'resend_calendar_request') {
+    const id = formData.get('id');
+    const recipientMode = String(formData.get('recipient_mode') || 'missing');
+
+    if (!id) {
+      return { error: 'Event ID is required' };
+    }
+
+    const validRecipientModes = new Set(['missing', 'selected', 'all']);
+    if (!validRecipientModes.has(recipientMode)) {
+      return { error: 'Invalid calendar resend recipient selection' };
+    }
+
+    try {
+      const eventId = Number(id);
+      const event = await getEditableEventById(db, eventId);
+
+      if (!event) {
+        return { error: 'Event not found' };
+      }
+
+      if (event.status === 'cancelled') {
+        return { error: 'Cancelled events cannot be resent' };
+      }
+
+      let targetUserIds: number[] = [];
+      if (recipientMode === 'missing') {
+        targetUserIds = await getActiveMemberIdsWithoutAcceptedEventEmailDelivery(db, eventId);
+        if (targetUserIds.length === 0) {
+          return {
+            success:
+              'All active members already have a provider-accepted or delivered calendar email for this event.',
+          };
+        }
+      } else if (recipientMode === 'selected') {
+        const selectedUserIds = parseRecipientUserIds(formData);
+        if (selectedUserIds.length === 0) {
+          return { error: 'Select at least one active member for a selective resend' };
+        }
+
+        const activeSelectedResult = await db
+          .prepare(
+            `
+              SELECT id
+              FROM users
+              WHERE status = 'active'
+                AND id IN (${selectedUserIds.map(() => '?').join(', ')})
+              ORDER BY id ASC
+            `
+          )
+          .bind(...selectedUserIds)
+          .all();
+
+        targetUserIds = ((activeSelectedResult.results || []) as Array<{ id: number }>).map(
+          (row) => Number(row.id)
+        );
+
+        if (targetUserIds.length === 0) {
+          return { error: 'No active members were selected for calendar resend' };
+        }
+      } else {
+        const activeUserIdsResult = await db
+          .prepare(
+            `
+              SELECT id
+              FROM users
+              WHERE status = 'active'
+              ORDER BY id ASC
+            `
+          )
+          .all();
+
+        targetUserIds = ((activeUserIdsResult.results || []) as Array<{ id: number }>).map(
+          (row) => Number(row.id)
+        );
+
+        if (targetUserIds.length === 0) {
+          return { error: 'No active members are available for calendar resend' };
+        }
+      }
+
+      const nextSequence = Number(event.calendar_sequence ?? 0) + 1;
+
+      const resendBatchId = crypto.randomUUID();
+      const resendStatements = await db.batch([
+        db
+          .prepare(
+            `
+              UPDATE events
+              SET calendar_sequence = ?
+              WHERE id = ?
+            `
+          )
+          .bind(nextSequence, eventId),
+        buildStageEventUpdateDeliveriesStatement(db, {
+          batchId: resendBatchId,
+          details: {
+            eventId,
+            restaurantName: event.restaurant_name,
+            restaurantAddress: event.restaurant_address,
+            eventDate: event.event_date,
+            eventTime: event.event_time || '18:00',
+          },
+          userIds: targetUserIds,
+          calendarSequence: nextSequence,
+        }),
+        buildSelectStagedDeliveryIdsStatement(db, resendBatchId),
+      ]);
+
+      const resendBatch = toStagedEventEmailBatchFromQueryResult(
+        resendBatchId,
+        'update',
+        resendStatements[2] as unknown as D1Result<{ id: number }>
+      );
+
+      if (!resendBatch || resendBatch.recipientCount === 0) {
+        return { error: 'No eligible members were available for calendar resend' };
+      }
+
+      try {
+        await enqueueStagedEventEmailBatch(queueContext, resendBatch);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('Failed to enqueue resent event calendar deliveries', { eventId, message });
+      }
+
+      await logActivity({
+        db,
+        userId: admin.id,
+        actionType: 'resend_event_calendar',
+        actionDetails: {
+          event_id: eventId,
+          calendar_sequence: nextSequence,
+          recipient_mode: recipientMode,
+          recipient_count: resendBatch.recipientCount,
+          selected_user_ids: recipientMode === 'selected' ? targetUserIds : undefined,
+        },
+        route: '/dashboard/admin/events',
+        request,
+      });
+
+      const memberLabel = resendBatch.recipientCount === 1 ? 'member' : 'members';
+      const modeLabel =
+        recipientMode === 'missing'
+          ? 'missing active'
+          : recipientMode === 'selected'
+            ? 'selected active'
+            : 'active';
+      return {
+        success: `Queued calendar resend for ${resendBatch.recipientCount} ${modeLabel} ${memberLabel}.`,
+      };
+    } catch (error) {
+      console.error('Event calendar resend error:', error);
+      return { error: 'Failed to resend calendar event' };
     }
   }
 
@@ -366,61 +656,53 @@ export async function action({ request, context }: Route.ActionArgs) {
 
     try {
       const eventId = Number(id);
+      let stagedCancellationBatch: StagedEventEmailBatch | null = null;
       const event = await db
         .prepare('SELECT id, restaurant_name, restaurant_address, event_date, event_time, calendar_sequence FROM events WHERE id = ?')
         .bind(eventId)
-        .first();
+        .first() as EventForNotificationRow | null;
 
-      if (event) {
-        const { sendEventCancellation } = await import('../lib/email.server');
-        const usersResult = await db
-          .prepare(`
-            SELECT u.email
-            FROM users u
-            WHERE u.status = 'active'
-          `)
-          .all();
+      const deleteBatchId = event ? crypto.randomUUID() : null;
+      const deleteStatements = [];
 
-        if (usersResult.results && usersResult.results.length > 0) {
-          const resendApiKey = context.cloudflare.env.RESEND_API_KEY || "";
-          const calendarSequence = Number((event as any).calendar_sequence ?? 0) + 1;
-          const eventTime = (event as any).event_time || '18:00';
-
-          const cancelPromises = usersResult.results.map((user: any) =>
-            sendEventCancellation({
+      if (event && deleteBatchId) {
+        deleteStatements.push(
+          buildStageEventCancellationDeliveriesForActiveMembersStatement(db, {
+            batchId: deleteBatchId,
+            details: {
               eventId,
-              restaurantName: (event as any).restaurant_name,
-              restaurantAddress: (event as any).restaurant_address || null,
-              eventDate: (event as any).event_date,
-              eventTime,
-              userEmail: user.email,
-              sequence: calendarSequence,
-              resendApiKey,
-            }).catch(err => {
-              console.error(`Failed to send cancellation to ${user.email}:`, err);
-              return { success: false, error: err.message };
-            })
-          );
-
-          const allCancellations = Promise.all(cancelPromises).then(results => {
-            const successCount = results.filter((r: { success: boolean }) => r.success).length;
-            const failureCount = results.filter((r: { success: boolean }) => !r.success).length;
-            console.log(`Event cancellations sent: ${successCount} succeeded, ${failureCount} failed`);
-            return results;
-          });
-
-          if (context.cloudflare.ctx?.waitUntil) {
-            context.cloudflare.ctx.waitUntil(allCancellations);
-          } else {
-            await allCancellations;
-          }
-        }
+              restaurantName: event.restaurant_name,
+              restaurantAddress: event.restaurant_address || null,
+              eventDate: event.event_date,
+              eventTime: event.event_time || '18:00',
+              sequence: Number(event.calendar_sequence ?? 0) + 1,
+            },
+          })
+        );
       }
 
-      await db
-        .prepare('DELETE FROM events WHERE id = ?')
-        .bind(eventId)
-        .run();
+      deleteStatements.push(buildDeleteEventStatement(db, eventId));
+
+      if (deleteBatchId) {
+        deleteStatements.push(buildSelectStagedDeliveryIdsStatement(db, deleteBatchId));
+      }
+
+      const deleteResults = await db.batch(deleteStatements);
+
+      if (deleteBatchId) {
+        stagedCancellationBatch = toStagedEventEmailBatchFromQueryResult(
+          deleteBatchId,
+          'cancel',
+          deleteResults[deleteResults.length - 1] as D1Result<{ id: number }>
+        );
+      }
+
+      try {
+        await enqueueStagedEventEmailBatch(queueContext, stagedCancellationBatch);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('Failed to enqueue staged event cancellation deliveries', { eventId, message });
+      }
 
       return redirect('/dashboard/admin/events');
     } catch (err) {
@@ -465,9 +747,9 @@ export async function action({ request, context }: Route.ActionArgs) {
     const sendPromise = sendAdhocSmsReminder({
       db,
       env: context.cloudflare.env,
-      event: event as any,
+      event: event as SmsEvent,
       customMessage: messageType === 'custom' ? customMessage : null,
-      recipientScope: recipientScope as any,
+      recipientScope: recipientScope as SmsRecipientScope,
       recipientUserId,
     });
 
@@ -491,6 +773,12 @@ export default function AdminEventsPage({ loaderData, actionData }: Route.Compon
   const { events, topRestaurant, topDate, smsMembers, eventMembersById } = loaderData;
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [smsScopeByEvent, setSmsScopeByEvent] = useState<Record<number, string>>({});
+  const [createData, setCreateData] = useState({
+    restaurant_name: '',
+    restaurant_address: '',
+    event_date: '',
+    event_time: '18:00',
+  });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editData, setEditData] = useState({
     id: 0,
@@ -503,6 +791,15 @@ export default function AdminEventsPage({ loaderData, actionData }: Route.Compon
   const submit = useSubmit();
   const navigation = useNavigation();
   const submittedActionRef = useRef<string | null>(null);
+
+  function resetCreateForm() {
+    setCreateData({
+      restaurant_name: '',
+      restaurant_address: '',
+      event_date: '',
+      event_time: '18:00',
+    });
+  }
 
   function startEditing(event: any) {
     setEditingId(event.id);
@@ -531,17 +828,22 @@ export default function AdminEventsPage({ loaderData, actionData }: Route.Compon
   useEffect(() => {
     if (navigation.state === 'submitting' && navigation.formData) {
       const action = navigation.formData.get('_action');
-      if (action === 'update') {
-        submittedActionRef.current = 'update';
+      if (action === 'update' || action === 'create') {
+        submittedActionRef.current = String(action);
       }
     }
   }, [navigation.state, navigation.formData]);
 
   useEffect(() => {
-    if (navigation.state === 'idle' && submittedActionRef.current === 'update') {
+    if (navigation.state === 'idle' && submittedActionRef.current) {
+      const submittedAction = submittedActionRef.current;
       submittedActionRef.current = null;
-      if (!actionData?.error) {
+      if (!actionData?.error && submittedAction === 'update') {
         cancelEditing();
+      }
+      if (!actionData?.error && submittedAction === 'create') {
+        setShowCreateForm(false);
+        resetCreateForm();
       }
     }
   }, [actionData, navigation.state]);
@@ -552,12 +854,13 @@ export default function AdminEventsPage({ loaderData, actionData }: Route.Compon
       day: 'numeric',
       year: 'numeric',
     });
-    if (confirm(`Are you sure you want to delete the event "${eventName}" on ${dateStr}? This action cannot be undone.`)) {
-      const formData = new FormData();
-      formData.append('_action', 'delete');
-      formData.append('id', eventId.toString());
-      submit(formData, { method: 'post' });
+    if (!confirmAction(`Are you sure you want to delete the event "${eventName}" on ${dateStr}? This action cannot be undone.`)) {
+      return;
     }
+    const formData = new FormData();
+    formData.append('_action', 'delete');
+    formData.append('id', eventId.toString());
+    submit(formData, { method: 'post' });
   }
 
   return (
@@ -573,22 +876,27 @@ export default function AdminEventsPage({ loaderData, actionData }: Route.Compon
                 variant="secondary"
                 onClick={() => {
                   setShowCreateForm(true);
-                  // Auto-fill form with vote winners
-                  const form = document.getElementById('create-form') as HTMLFormElement;
-                  if (form) {
-                    setTimeout(() => {
-                      (form.elements.namedItem('restaurant_name') as HTMLInputElement).value = topRestaurant.name;
-                      (form.elements.namedItem('restaurant_address') as HTMLInputElement).value = topRestaurant.address || '';
-                      (form.elements.namedItem('event_date') as HTMLInputElement).value = topDate.suggested_date;
-                    }, 0);
-                  }
+                  setCreateData({
+                    restaurant_name: topRestaurant.name,
+                    restaurant_address: topRestaurant.address || '',
+                    event_date: topDate.suggested_date,
+                    event_time: '18:00',
+                  });
                 }}
               >
-                Create from Vote Winners
+                Prefill from Vote Leaders
               </Button>
             )}
             <Button
-              onClick={() => setShowCreateForm(!showCreateForm)}
+              onClick={() => {
+                if (showCreateForm) {
+                  setShowCreateForm(false);
+                  resetCreateForm();
+                  return;
+                }
+
+                setShowCreateForm(true);
+              }}
             >
               {showCreateForm ? 'Cancel' : '+ Create Event'}
             </Button>
@@ -619,41 +927,22 @@ export default function AdminEventsPage({ loaderData, actionData }: Route.Compon
       {showCreateForm && (
         <Card className="p-6 mb-8">
           <h2 className="text-xl font-semibold mb-4">Create New Event</h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            Creating an event here does not close the active poll. Use Poll Management to finalize winners and close voting.
+          </p>
           <Form method="post" id="create-form" className="space-y-4">
             <input type="hidden" name="_action" value="create" />
 
-            <div>
-              <label
-                htmlFor="restaurant_name"
-                className="block text-sm font-medium text-foreground mb-1"
-              >
-                Restaurant Name *
-              </label>
-              <input
-                id="restaurant_name"
-                name="restaurant_name"
-                type="text"
-                required
-                placeholder="e.g., Ruth's Chris Steak House"
-                className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="restaurant_address"
-                className="block text-sm font-medium text-foreground mb-1"
-              >
-                Restaurant Address (Optional)
-              </label>
-              <input
-                id="restaurant_address"
-                name="restaurant_address"
-                type="text"
-                placeholder="e.g., 123 Main St, San Francisco, CA"
-                className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-            </div>
+            <EventRestaurantFields
+              restaurantName={createData.restaurant_name}
+              restaurantAddress={createData.restaurant_address}
+              onRestaurantNameChange={(value) =>
+                setCreateData((current) => ({ ...current, restaurant_name: value }))
+              }
+              onRestaurantAddressChange={(value) =>
+                setCreateData((current) => ({ ...current, restaurant_address: value }))
+              }
+            />
 
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -668,6 +957,10 @@ export default function AdminEventsPage({ loaderData, actionData }: Route.Compon
                   name="event_date"
                   type="date"
                   required
+                  value={createData.event_date}
+                  onChange={(event) =>
+                    setCreateData((current) => ({ ...current, event_date: event.target.value }))
+                  }
                   className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
                 />
               </div>
@@ -683,7 +976,10 @@ export default function AdminEventsPage({ loaderData, actionData }: Route.Compon
                   id="event_time"
                   name="event_time"
                   type="time"
-                  defaultValue="18:00"
+                  value={createData.event_time}
+                  onChange={(event) =>
+                    setCreateData((current) => ({ ...current, event_time: event.target.value }))
+                  }
                   className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
                 />
               </div>
@@ -724,299 +1020,398 @@ export default function AdminEventsPage({ loaderData, actionData }: Route.Compon
           </div>
         ) : (
           <div className="divide-y divide-border">
-            {events.map((event: any) => (
-              <div key={event.id} className="p-6">
-                {editingId === event.id ? (
-                  <Form method="post" className="space-y-4">
-                    <input type="hidden" name="_action" value="update" />
-                    <input type="hidden" name="id" value={editData.id} />
+            {events.map((event: any) => {
+              const eventMembers = eventMembersById[event.id] || [];
+              const missingCalendarMembers = eventMembers.filter(
+                (member: EventMembersRow) => !member.hasAcceptedCalendarDelivery
+              );
 
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-1">
-                        Restaurant Name *
-                      </label>
-                      <input
-                        name="restaurant_name"
-                        type="text"
-                        required
-                        value={editData.restaurant_name}
-                        onChange={(e) =>
-                          setEditData({ ...editData, restaurant_name: e.target.value })
+              return (
+                <div key={event.id} className="p-6">
+                  {editingId === event.id ? (
+                    <Form method="post" className="space-y-4">
+                      <input type="hidden" name="_action" value="update" />
+                      <input type="hidden" name="id" value={editData.id} />
+
+                      <EventRestaurantFields
+                        restaurantName={editData.restaurant_name}
+                        restaurantAddress={editData.restaurant_address}
+                        onRestaurantNameChange={(value) =>
+                          setEditData({ ...editData, restaurant_name: value })
                         }
-                        className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-1">
-                        Restaurant Address
-                      </label>
-                      <input
-                        name="restaurant_address"
-                        type="text"
-                        value={editData.restaurant_address}
-                        onChange={(e) =>
-                          setEditData({ ...editData, restaurant_address: e.target.value })
+                        onRestaurantAddressChange={(value) =>
+                          setEditData({ ...editData, restaurant_address: value })
                         }
-                        className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
                       />
-                    </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-foreground mb-1">
-                          Event Date *
-                        </label>
-                        <input
-                          name="event_date"
-                          type="date"
-                          required
-                          value={editData.event_date}
-                          onChange={(e) =>
-                            setEditData({ ...editData, event_date: e.target.value })
-                          }
-                          className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
-                        />
-                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-foreground mb-1">
+                            Event Date *
+                          </label>
+                          <input
+                            name="event_date"
+                            type="date"
+                            required
+                            value={editData.event_date}
+                            onChange={(e) =>
+                              setEditData({ ...editData, event_date: e.target.value })
+                            }
+                            className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
+                          />
+                        </div>
 
-                      <div>
-                        <label className="block text-sm font-medium text-foreground mb-1">
-                          Event Time
-                        </label>
-                        <input
-                          name="event_time"
-                          type="time"
-                          value={editData.event_time}
-                          onChange={(e) =>
-                            setEditData({ ...editData, event_time: e.target.value })
-                          }
-                          className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-1">
-                        Status
-                      </label>
-                      <p className="text-sm text-muted-foreground">
-                        {event.displayStatus} (auto)
-                      </p>
-                      <label className="mt-2 flex items-center gap-2 text-sm text-foreground">
-                        <input
-                          type="checkbox"
-                          name="status"
-                          value="cancelled"
-                          checked={editData.status === 'cancelled'}
-                          onChange={(e) =>
-                            setEditData({ ...editData, status: e.target.checked ? 'cancelled' : 'upcoming' })
-                          }
-                          className="h-4 w-4 text-accent focus:ring-accent border-border rounded"
-                        />
-                        Mark as cancelled
-                      </label>
-                    </div>
-
-                    <div className="flex items-center">
-                      <input
-                        id="send_updates"
-                        name="send_updates"
-                        type="checkbox"
-                        value="true"
-                        defaultChecked={true}
-                        className="h-4 w-4 text-accent focus:ring-accent border-border rounded"
-                      />
-                      <label htmlFor="send_updates" className="ml-2 block text-sm text-foreground">
-                        Send calendar updates to all active members
-                      </label>
-                    </div>
-
-                    <div className="flex gap-3">
-                      <Button type="submit">
-                        Save Changes
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={cancelEditing}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </Form>
-                ) : (
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                        <h3 className="text-lg font-semibold text-foreground">
-                          {event.restaurant_name}
-                        </h3>
-                        <Badge
-                          variant={
-                            event.displayStatus === 'upcoming'
-                              ? 'success'
-                              : event.displayStatus === 'completed'
-                              ? 'muted'
-                              : 'danger'
-                          }
-                        >
-                          {event.displayStatus}
-                        </Badge>
-                      </div>
-                      {event.restaurant_address && (
-                        <p className="text-sm text-muted-foreground mb-1">
-                          {event.restaurant_address}
-                        </p>
-                      )}
-                      <p className="text-sm text-muted-foreground">
-                        {formatDateForDisplay(event.event_date, {
-                          weekday: 'long',
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric',
-                        })}{' '}
-                        at {formatTimeForDisplay(event.event_time || '18:00')}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-2">
-                        Created {formatDateForDisplay(event.created_at)}
-                      </p>
-                      <div className="mt-4">
-                        <Form method="post" className="space-y-3">
-                          <input type="hidden" name="_action" value="send_sms_reminder" />
-                          <input type="hidden" name="event_id" value={event.id} />
-                          <div>
-                            <label className="block text-sm font-medium text-foreground mb-1">
-                              SMS Reminder
-                            </label>
-                            <select
-                              name="message_type"
-                              className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
-                              defaultValue="default"
-                            >
-                              <option value="default">Use default reminder template</option>
-                              <option value="custom">Send custom message</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-foreground mb-1">
-                              Recipients
-                            </label>
-                            <select
-                              name="recipient_scope"
-                              className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
-                              value={smsScopeByEvent[event.id] || 'all'}
-                              onChange={(eventScope) =>
-                                setSmsScopeByEvent((prev) => ({
-                                  ...prev,
-                                  [event.id]: eventScope.target.value,
-                                }))
-                              }
-                            >
-                              <option value="all">All SMS-opted members</option>
-                              <option value="pending">No RSVP yet</option>
-                              <option value="yes">RSVP Yes</option>
-                              <option value="no">RSVP No</option>
-                              <option value="maybe">RSVP Maybe</option>
-                              <option value="specific">Specific member</option>
-                            </select>
-                          </div>
-                          {(smsScopeByEvent[event.id] || 'all') === 'specific' && (
-                            <div>
-                              <label className="block text-sm font-medium text-foreground mb-1">
-                                Specific Recipient
-                              </label>
-                              <select
-                                name="recipient_user_id"
-                                className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
-                                defaultValue=""
-                              >
-                                <option value="">Select a member</option>
-                                {smsMembers.map((member: any) => (
-                                  <option key={member.id} value={member.id}>
-                                    {member.name || member.email}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          )}
-                          <div>
-                            <label className="block text-sm font-medium text-foreground mb-1">
-                              Custom Message (Optional)
-                            </label>
-                            <textarea
-                              name="custom_message"
-                              rows={3}
-                              placeholder="Add a custom note (RSVP + opt-out instructions are appended automatically)."
-                              className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
-                            />
-                          </div>
-                          <Button type="submit" size="sm">
-                            Send SMS Reminder
-                          </Button>
-                        </Form>
-                      </div>
-                    </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => startEditing(event)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => handleDelete(event.id, event.restaurant_name, event.event_date)}
-                        >
-                          Delete
-                        </Button>
-                    </div>
-                    {event.status === 'upcoming' && (
-                      <div className="mt-6 border-t border-border pt-4">
-                        <h4 className="text-sm font-semibold text-foreground mb-3">RSVP Overrides</h4>
-                        <div className="space-y-3">
-                          {(eventMembersById[event.id] || []).map((member: any) => (
-                            <Form key={member.id} method="post" className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                              <input type="hidden" name="_action" value="override_rsvp" />
-                              <input type="hidden" name="event_id" value={event.id} />
-                              <input type="hidden" name="user_id" value={member.id} />
-                              <div className="flex-1">
-                                <div className="text-sm font-medium text-foreground">
-                                  {member.name || member.email}
-                                  {member.admin_override === 1 && (
-                                    <Badge variant="warning" className="ml-2">
-                                      Admin override
-                                    </Badge>
-                                  )}
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                  Current RSVP: {member.rsvp_status || 'pending'}
-                                </div>
-                              </div>
-                              <div className="flex gap-2">
-                                <select
-                                  name="status"
-                                  defaultValue={member.rsvp_status || 'maybe'}
-                                  className="px-3 py-2 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                                >
-                                  <option value="yes">Yes</option>
-                                  <option value="no">No</option>
-                                  <option value="maybe">Maybe</option>
-                                </select>
-                                <Button type="submit" size="sm">
-                                  Override
-                                </Button>
-                              </div>
-                            </Form>
-                          ))}
+                        <div>
+                          <label className="block text-sm font-medium text-foreground mb-1">
+                            Event Time
+                          </label>
+                          <input
+                            name="event_time"
+                            type="time"
+                            value={editData.event_time}
+                            onChange={(e) =>
+                              setEditData({ ...editData, event_time: e.target.value })
+                            }
+                            className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
+                          />
                         </div>
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+
+                      <div>
+                        <label className="block text-sm font-medium text-foreground mb-1">
+                          Status
+                        </label>
+                        <p className="text-sm text-muted-foreground">
+                          {event.displayStatus} (auto)
+                        </p>
+                        <label className="mt-2 flex items-center gap-2 text-sm text-foreground">
+                          <input
+                            type="checkbox"
+                            name="status"
+                            value="cancelled"
+                            checked={editData.status === 'cancelled'}
+                            onChange={(e) =>
+                              setEditData({ ...editData, status: e.target.checked ? 'cancelled' : 'upcoming' })
+                            }
+                            className="h-4 w-4 text-accent focus:ring-accent border-border rounded"
+                          />
+                          Mark as cancelled
+                        </label>
+                      </div>
+
+                      <div className="flex items-center">
+                        <input
+                          id="send_updates"
+                          name="send_updates"
+                          type="checkbox"
+                          value="true"
+                          defaultChecked={true}
+                          className="h-4 w-4 text-accent focus:ring-accent border-border rounded"
+                        />
+                        <label htmlFor="send_updates" className="ml-2 block text-sm text-foreground">
+                          Send calendar updates to all active members
+                        </label>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <Button type="submit">
+                          Save Changes
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={cancelEditing}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </Form>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h3 className="text-lg font-semibold text-foreground">
+                              {event.restaurant_name}
+                            </h3>
+                            <Badge
+                              variant={
+                                event.displayStatus === 'upcoming'
+                                  ? 'success'
+                                  : event.displayStatus === 'completed'
+                                    ? 'muted'
+                                    : 'danger'
+                              }
+                            >
+                              {event.displayStatus}
+                            </Badge>
+                          </div>
+                          {event.restaurant_address && (
+                            <p className="text-sm text-muted-foreground mb-1">
+                              {event.restaurant_address}
+                            </p>
+                          )}
+                          <p className="text-sm text-muted-foreground">
+                            {formatDateForDisplay(event.event_date, {
+                              weekday: 'long',
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric',
+                            })}{" "}
+                            at {formatTimeForDisplay(event.event_time || '18:00')}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            Created {formatDateForDisplay(event.created_at)}
+                          </p>
+                          <div className="mt-4">
+                            <Form method="post" className="space-y-3">
+                              <input type="hidden" name="_action" value="send_sms_reminder" />
+                              <input type="hidden" name="event_id" value={event.id} />
+                              <div>
+                                <label className="block text-sm font-medium text-foreground mb-1">
+                                  SMS Reminder
+                                </label>
+                                <select
+                                  name="message_type"
+                                  className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
+                                  defaultValue="default"
+                                >
+                                  <option value="default">Use default reminder template</option>
+                                  <option value="custom">Send custom message</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-sm font-medium text-foreground mb-1">
+                                  Recipients
+                                </label>
+                                <select
+                                  name="recipient_scope"
+                                  className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
+                                  value={smsScopeByEvent[event.id] || 'all'}
+                                  onChange={(eventScope) =>
+                                    setSmsScopeByEvent((prev) => ({
+                                      ...prev,
+                                      [event.id]: eventScope.target.value,
+                                    }))
+                                  }
+                                >
+                                  <option value="all">All SMS-opted members</option>
+                                  <option value="pending">No RSVP yet</option>
+                                  <option value="yes">RSVP Yes</option>
+                                  <option value="no">RSVP No</option>
+                                  <option value="maybe">RSVP Maybe</option>
+                                  <option value="specific">Specific member</option>
+                                </select>
+                              </div>
+                              {(smsScopeByEvent[event.id] || 'all') === 'specific' && (
+                                <div>
+                                  <label className="block text-sm font-medium text-foreground mb-1">
+                                    Specific Recipient
+                                  </label>
+                                  <select
+                                    name="recipient_user_id"
+                                    className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
+                                    defaultValue=""
+                                  >
+                                    <option value="">Select a member</option>
+                                    {smsMembers.map((member: any) => (
+                                      <option key={member.id} value={member.id}>
+                                        {member.name || member.email}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                              <div>
+                                <label className="block text-sm font-medium text-foreground mb-1">
+                                  Custom Message (Optional)
+                                </label>
+                                <textarea
+                                  name="custom_message"
+                                  rows={3}
+                                  placeholder="Add a custom note (RSVP + opt-out instructions are appended automatically)."
+                                  className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
+                                />
+                              </div>
+                              <Button type="submit" size="sm">
+                                Send SMS Reminder
+                              </Button>
+                            </Form>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => startEditing(event)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => handleDelete(event.id, event.restaurant_name, event.event_date)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                      {event.displayStatus === 'upcoming' && (
+                        <div className="mt-6 rounded-md border border-border bg-muted/20 p-4">
+                          <h4 className="text-sm font-semibold text-foreground">Calendar Resend</h4>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            Queue a fresh calendar update using delivery history from the durable email pipeline.
+                          </p>
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Currently missing: {missingCalendarMembers.length} of {eventMembers.length} active members.
+                          </p>
+                          <Form method="post" className="mt-4 space-y-4">
+                            <input type="hidden" name="_action" value="resend_calendar_request" />
+                            <input type="hidden" name="id" value={event.id} />
+                            <div className="space-y-3">
+                              <label className="flex items-start gap-3 rounded-md border border-border p-3">
+                                <input
+                                  type="radio"
+                                  name="recipient_mode"
+                                  value="missing"
+                                  defaultChecked={true}
+                                  className="mt-1 h-4 w-4 text-accent focus:ring-accent border-border"
+                                />
+                                <div>
+                                  <div className="text-sm font-medium text-foreground">Missing only</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    Only active members without any provider-accepted or delivered calendar email for this event.
+                                  </div>
+                                </div>
+                              </label>
+                              <label className="flex items-start gap-3 rounded-md border border-border p-3">
+                                <input
+                                  type="radio"
+                                  name="recipient_mode"
+                                  value="selected"
+                                  className="mt-1 h-4 w-4 text-accent focus:ring-accent border-border"
+                                />
+                                <div>
+                                  <div className="text-sm font-medium text-foreground">Selected members</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    Choose a subset below, even if they already had a delivered or accepted calendar email.
+                                  </div>
+                                </div>
+                              </label>
+                              <label className="flex items-start gap-3 rounded-md border border-border p-3">
+                                <input
+                                  type="radio"
+                                  name="recipient_mode"
+                                  value="all"
+                                  className="mt-1 h-4 w-4 text-accent focus:ring-accent border-border"
+                                />
+                                <div>
+                                  <div className="text-sm font-medium text-foreground">All active members</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    Force a full calendar resend to every active member.
+                                  </div>
+                                </div>
+                              </label>
+                            </div>
+                            <div>
+                              <div className="mb-2 text-sm font-medium text-foreground">
+                                Member delivery history
+                              </div>
+                              <div className="max-h-64 overflow-y-auto rounded-md border border-border divide-y divide-border">
+                                {eventMembers.map((member: EventMembersRow) => {
+                                  const deliveryBadge = getCalendarDeliveryBadge(member);
+                                  return (
+                                    <label
+                                      key={member.id}
+                                      className="flex items-start gap-3 px-3 py-3"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        name="recipient_user_ids"
+                                        value={member.id}
+                                        className="mt-1 h-4 w-4 text-accent focus:ring-accent border-border rounded"
+                                      />
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-sm font-medium text-foreground">
+                                            {member.name || member.email}
+                                          </span>
+                                          <Badge variant={deliveryBadge.variant}>
+                                            {deliveryBadge.label}
+                                          </Badge>
+                                          {member.admin_override === 1 && (
+                                            <Badge variant="warning">Admin override</Badge>
+                                          )}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">
+                                          {member.email}
+                                        </div>
+                                        {member.lastCalendarDeliveryStatus && (
+                                          <div className="text-xs text-muted-foreground">
+                                            Latest calendar email: {member.lastCalendarDeliveryType || 'unknown'} / {member.lastCalendarDeliveryStatus}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                Checkbox selections are used only when <span className="font-medium">Selected members</span> is chosen.
+                              </p>
+                            </div>
+                            <Button type="submit" variant="secondary" size="sm">
+                              Queue Calendar Resend
+                            </Button>
+                          </Form>
+                        </div>
+                      )}
+                      {event.status === 'upcoming' && (
+                        <div className="mt-6 border-t border-border pt-4">
+                          <h4 className="text-sm font-semibold text-foreground mb-3">RSVP Overrides</h4>
+                          <div className="space-y-3">
+                            {eventMembers.map((member: any) => (
+                              <Form key={member.id} method="post" className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                <input type="hidden" name="_action" value="override_rsvp" />
+                                <input type="hidden" name="event_id" value={event.id} />
+                                <input type="hidden" name="user_id" value={member.id} />
+                                <div className="flex-1">
+                                  <div className="text-sm font-medium text-foreground">
+                                    {member.name || member.email}
+                                    {member.admin_override === 1 && (
+                                      <Badge variant="warning" className="ml-2">
+                                        Admin override
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    Current RSVP: {member.rsvp_status || 'pending'}
+                                  </div>
+                                </div>
+                                <div className="flex gap-2">
+                                  <select
+                                    name="status"
+                                    defaultValue={member.rsvp_status || 'maybe'}
+                                    className="px-3 py-2 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                                  >
+                                    <option value="yes">Yes</option>
+                                    <option value="no">No</option>
+                                    <option value="maybe">Maybe</option>
+                                  </select>
+                                  <Button type="submit" size="sm">
+                                    Override
+                                  </Button>
+                                </div>
+                              </Form>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </Card>

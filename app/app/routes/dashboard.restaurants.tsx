@@ -12,6 +12,7 @@ import {
 import { Alert, Badge, Button, Card, EmptyState, PageHeader } from "../components/ui";
 import { ClockIcon, MapPinIcon } from "@heroicons/react/24/outline";
 import { StarIcon } from "@heroicons/react/24/solid";
+import { confirmAction } from "../lib/confirm.client";
 import { normalizeRestaurantPhotoUrl } from "../lib/restaurant-photo-url";
 
 interface RestaurantDisplay {
@@ -158,12 +159,14 @@ export default function RestaurantsPage({ loaderData, actionData }: Route.Compon
   const submit = useSubmit();
 
   function handleDelete(suggestionId: number, restaurantName: string) {
-    if (confirm(`Are you sure you want to delete "${restaurantName}"? This action cannot be undone.`)) {
-      const formData = new FormData();
-      formData.append('_action', 'delete');
-      formData.append('suggestion_id', suggestionId.toString());
-      submit(formData, { method: 'post' });
+    if (!confirmAction(`Are you sure you want to delete "${restaurantName}"? This action cannot be undone.`)) {
+      return;
     }
+
+    const formData = new FormData();
+    formData.append('_action', 'delete');
+    formData.append('suggestion_id', suggestionId.toString());
+    submit(formData, { method: 'post' });
   }
 
   function handleRestaurantSubmit(placeDetails: any) {
@@ -300,12 +303,12 @@ export default function RestaurantsPage({ loaderData, actionData }: Route.Compon
                                   </span>
                                 </p>
                                 {/* Tooltip with full hours */}
-                                <div className="absolute left-0 top-full mt-1 hidden group-hover:block bg-gray-900 text-white text-xs rounded-lg p-3 shadow-lg z-10 min-w-[250px]">
+                                <div className="absolute left-0 top-full mt-1 hidden group-hover:block bg-foreground text-background text-xs rounded-lg p-3 shadow-lg z-10 min-w-[250px]">
                                   <div className="space-y-1">
                                     {hours.map((h: string, idx: number) => (
                                       <div key={idx} className="flex justify-between gap-3">
                                         <span className="font-medium">{h.split(':')[0]}:</span>
-                                        <span className="text-gray-300">{h.split(':').slice(1).join(':').trim()}</span>
+                                        <span className="text-background/80">{h.split(':').slice(1).join(':').trim()}</span>
                                       </div>
                                     ))}
                                   </div>
@@ -332,7 +335,7 @@ export default function RestaurantsPage({ loaderData, actionData }: Route.Compon
                               href={suggestion.google_maps_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-sm text-blue-600 hover:text-blue-700 hover:underline"
+                              className="text-sm text-accent hover:text-accent-strong hover:underline"
                             >
                               View on Google Maps →
                             </a>

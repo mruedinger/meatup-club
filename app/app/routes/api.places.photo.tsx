@@ -99,7 +99,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
                     `%${encodeURIComponent(name)}%`
                   )
                   .run()
-                  .catch((e: unknown) => console.error("Failed to update photo_url:", e))
+                  .catch((e: unknown) => {
+                    const message = e instanceof Error ? e.message : String(e);
+                    console.error("Failed to update photo URL", { message });
+                  })
               );
               return new Response(freshResponse.body, {
                 status: freshResponse.status,
@@ -117,7 +120,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       "public, max-age=604800, stale-while-revalidate=2592000"
     );
   } catch (error) {
-    console.error("Place photo error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("Place photo failed", { message });
     return Response.json(
       { error: "Failed to fetch place photo" },
       { status: 500 }

@@ -1,67 +1,126 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { action } from "./dashboard.admin.polls";
 import { requireActiveUser } from "../lib/auth.server";
-import { closePoll } from "../lib/polls.server";
+import {
+  buildSelectStagedDeliveryIdsStatement,
+  buildStageEventInviteDeliveriesForLastInsertedEventStatement,
+  enqueueStagedEventEmailBatch,
+  toStagedEventEmailBatchFromQueryResult,
+} from "../lib/event-email-delivery.server";
 
 vi.mock("../lib/auth.server", () => ({
   requireActiveUser: vi.fn(),
 }));
 
-vi.mock("../lib/polls.server", async () => {
-  const actual = await vi.importActual<typeof import("../lib/polls.server")>("../lib/polls.server");
-  return {
-    ...actual,
-    closePoll: vi.fn(),
-  };
-});
+vi.mock("../lib/event-email-delivery.server", () => ({
+  buildSelectStagedDeliveryIdsStatement: vi.fn(),
+  buildStageEventInviteDeliveriesForLastInsertedEventStatement: vi.fn(),
+  enqueueStagedEventEmailBatch: vi.fn(),
+  toStagedEventEmailBatchFromQueryResult: vi.fn(),
+}));
 
 function createMockDb({
   activePoll = { id: 1 },
   restaurant = { id: 10, name: "Prime", address: "123 Main", vote_count: 2 },
   date = { id: 20, suggested_date: "2026-06-10", vote_count: 3 },
   closeChanges = 1,
+  failOnRawTransactions = false,
 }: {
   activePoll?: any;
   restaurant?: any;
   date?: any;
   closeChanges?: number;
+  failOnRawTransactions?: boolean;
 }) {
-  const run = vi.fn(async () => ({ meta: { changes: closeChanges, last_row_id: 555 } }));
+  const runCalls: Array<{ sql: string; bindArgs: unknown[] }> = [];
 
   const prepare = vi.fn((sql: string) => {
+    const normalizedSql = sql.replace(/\s+/g, " ").trim();
+    const isSelectStatement = normalizedSql.startsWith("SELECT");
+
     const firstForArgs = async () => {
-      if (sql.includes("SELECT id FROM polls WHERE id = ? AND status = 'active'")) {
+      if (normalizedSql.includes("SELECT id FROM polls WHERE id = ? AND status = 'active'")) {
         return activePoll;
       }
 
-      if (sql.includes("SELECT r.*, COUNT(rv.id) as vote_count")) {
+      if (normalizedSql.includes("SELECT r.*, COUNT(rv.id) as vote_count")) {
         return restaurant;
       }
 
-      if (sql.includes("SELECT ds.*, COUNT(dv.id) as vote_count")) {
+      if (normalizedSql.includes("SELECT ds.*, COUNT(dv.id) as vote_count")) {
         return date;
       }
 
-      if (sql.includes("SELECT email FROM users WHERE status = ?")) {
+      if (normalizedSql.includes("SELECT email FROM users WHERE status = ?")) {
         return null;
+      }
+
+      if (normalizedSql === "SELECT created_event_id FROM polls WHERE id = ?") {
+        return { created_event_id: 555 };
       }
 
       throw new Error(`Unexpected SQL in first(): ${sql}`);
     };
 
+    const allForArgs = async () => {
+      if (normalizedSql === "SELECT created_event_id FROM polls WHERE id = ?") {
+        return { results: [{ created_event_id: 555 }] };
+      }
+
+      if (normalizedSql === "SELECT id FROM event_email_deliveries WHERE batch_id = ? ORDER BY id ASC") {
+        return { results: [{ id: 41 }, { id: 42 }] };
+      }
+
+      return { results: [] };
+    };
+
+    const run = vi.fn(async (bindArgs: unknown[] = []) => {
+      if (
+        failOnRawTransactions &&
+        (normalizedSql === "BEGIN TRANSACTION" ||
+          normalizedSql === "COMMIT" ||
+          normalizedSql === "ROLLBACK")
+      ) {
+        throw new Error("D1 does not support raw SQL transactions");
+      }
+
+      runCalls.push({ sql: normalizedSql, bindArgs });
+      return { meta: { changes: closeChanges, last_row_id: 555 } };
+    });
+
     return {
       first: () => firstForArgs(),
-      run,
-      all: async () => ({ results: [] }),
-      bind: (..._args: unknown[]) => ({
+      ...(isSelectStatement ? {} : { run }),
+      all: () => allForArgs(),
+      bind: (...args: unknown[]) => ({
         first: () => firstForArgs(),
-        run,
-        all: async () => ({ results: [] }),
+        ...(isSelectStatement ? {} : { run: () => run(args) }),
+        all: () => allForArgs(),
       }),
     };
   });
 
-  return { prepare, run };
+  const batch = vi.fn(async (statements: Array<{ run?: () => Promise<unknown>; all?: () => Promise<unknown> }>) => {
+    const results = [];
+
+    for (const statement of statements) {
+      if (typeof statement.run === "function") {
+        results.push(await statement.run());
+        continue;
+      }
+
+      if (typeof statement.all === "function") {
+        results.push(await statement.all());
+        continue;
+      }
+
+      results.push({});
+    }
+
+    return results;
+  });
+
+  return { prepare, runCalls, batch };
 }
 
 describe("dashboard.admin.polls close action", () => {
@@ -74,10 +133,21 @@ describe("dashboard.admin.polls close action", () => {
       email: "admin@example.com",
       name: "Admin",
     } as any);
-    vi.mocked(closePoll).mockResolvedValue({
-      ok: true,
-      eventId: 555,
-    });
+    vi.mocked(buildStageEventInviteDeliveriesForLastInsertedEventStatement).mockImplementation((db: any) =>
+      db.prepare("INSERT INTO event_email_deliveries /* staged poll invite */").bind("batch-poll-invite")
+    );
+    vi.mocked(buildSelectStagedDeliveryIdsStatement).mockImplementation((db: any) =>
+      db
+        .prepare("SELECT id FROM event_email_deliveries WHERE batch_id = ? ORDER BY id ASC")
+        .bind("batch-poll-invite")
+    );
+    vi.mocked(toStagedEventEmailBatchFromQueryResult).mockImplementation((batchId, deliveryType) => ({
+      batchId,
+      deliveryIds: [41, 42],
+      recipientCount: 2,
+      deliveryType,
+    }));
+    vi.mocked(enqueueStagedEventEmailBatch).mockResolvedValue(undefined);
   });
 
   it("rejects winning dates that are not in the poll being closed", async () => {
@@ -103,8 +173,8 @@ describe("dashboard.admin.polls close action", () => {
     expect(result).toEqual({ error: "Selected date not found in this poll" });
   });
 
-  it("uses the shared close helper when closing polls", async () => {
-    const db = createMockDb({});
+  it("creates events for poll close without issuing raw SQL transaction statements", async () => {
+    const db = createMockDb({ failOnRawTransactions: true });
 
     const formData = new FormData();
     formData.set("_action", "close");
@@ -112,7 +182,6 @@ describe("dashboard.admin.polls close action", () => {
     formData.set("winning_restaurant_id", "10");
     formData.set("winning_date_id", "20");
     formData.set("create_event", "true");
-    formData.set("event_time", "18:30");
 
     const response = await action({
       request: new Request("http://localhost/dashboard/admin/polls", {
@@ -125,19 +194,60 @@ describe("dashboard.admin.polls close action", () => {
     expect(response).toBeInstanceOf(Response);
     expect((response as Response).status).toBe(302);
     expect((response as Response).headers.get("Location")).toBe("/dashboard/admin/polls");
-    expect(closePoll).toHaveBeenCalledWith({
+    expect(db.batch).toHaveBeenCalledTimes(1);
+    expect(db.runCalls).not.toContainEqual(
+      expect.objectContaining({
+        sql: "BEGIN TRANSACTION",
+      })
+    );
+  });
+
+  it("stages invite deliveries durably when poll close creates an event", async () => {
+    const db = createMockDb({});
+
+    const formData = new FormData();
+    formData.set("_action", "close");
+    formData.set("poll_id", "1");
+    formData.set("winning_restaurant_id", "10");
+    formData.set("winning_date_id", "20");
+    formData.set("create_event", "true");
+    formData.set("send_invites", "true");
+    formData.set("event_time", "18:30");
+
+    const response = await action({
+      request: new Request("http://localhost/dashboard/admin/polls", {
+        method: "POST",
+        body: formData,
+      }),
+      context: { cloudflare: { env: { DB: db, APP_TIMEZONE: "UTC" }, ctx: { waitUntil: vi.fn() } } } as any,
+    } as any);
+
+    expect(response).toBeInstanceOf(Response);
+    expect((response as Response).status).toBe(302);
+    expect(buildStageEventInviteDeliveriesForLastInsertedEventStatement).toHaveBeenCalledWith(
       db,
-      pollId: 1,
-      closedByUserId: 1,
-      winningRestaurantId: 10,
-      winningDateId: 20,
-      event: {
-        restaurantName: "Prime",
-        restaurantAddress: "123 Main",
-        eventDate: "2026-06-10",
-        eventTime: "18:30",
+      {
+        batchId: expect.any(String),
+        details: {
+          restaurantName: "Prime",
+          restaurantAddress: "123 Main",
+          eventDate: "2026-06-10",
+          eventTime: "18:30",
+        },
+      }
+    );
+    expect(enqueueStagedEventEmailBatch).toHaveBeenCalledWith(
+      {
+        db,
+        queue: undefined,
       },
-    });
+      {
+        batchId: expect.any(String),
+        deliveryIds: [41, 42],
+        recipientCount: 2,
+        deliveryType: "invite",
+      }
+    );
   });
 
   it("creates a new poll for admins", async () => {

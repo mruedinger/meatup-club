@@ -3,6 +3,23 @@ import { getUser } from "../lib/auth.server";
 import { withCache } from "../lib/cache.server";
 import { enforceRateLimit } from "../lib/rate-limit.server";
 
+interface PlacesDetailsResponse {
+  id: string;
+  displayName?: { text?: string };
+  formattedAddress?: string;
+  internationalPhoneNumber?: string;
+  websiteUri?: string;
+  googleMapsUri?: string;
+  rating?: number;
+  userRatingCount?: number;
+  priceLevel?: string;
+  types?: string[];
+  photos?: Array<{ name: string }>;
+  currentOpeningHours?: {
+    weekdayDescriptions?: string[];
+  };
+}
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const placeId = url.searchParams.get("placeId")?.trim();
@@ -80,12 +97,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         );
 
         if (!response.ok) {
-          const error = await response.text();
-          console.error("Place details error:", error);
-          throw new Error("Failed to fetch place details");
+          throw new Error(`Places details request failed with status ${response.status}`);
         }
 
-        const data = (await response.json()) as any;
+        const data = (await response.json()) as PlacesDetailsResponse;
         const photoUrl = data.photos?.[0]?.name
           ? `/api/places/photo?${new URLSearchParams({
               name: data.photos[0].name,
@@ -117,7 +132,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       "public, max-age=86400, stale-while-revalidate=604800"
     );
   } catch (error) {
-    console.error("Place details error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("Place details failed", { message });
     return Response.json(
       { error: "Failed to fetch place details" },
       { status: 500 }

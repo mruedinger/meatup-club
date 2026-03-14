@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { sendInviteEmail, sendCommentReplyEmail } from './email.server';
+import { sendAnnouncementEmails, sendInviteEmail, sendCommentReplyEmail } from './email.server';
 
 /**
  * Email Sending Tests
@@ -355,6 +355,77 @@ describe('Email Sending - Resend API Integration', () => {
       const body = JSON.parse(fetchCall[1].body);
       expect(body.html).toContain('"The Grill"');
       expect(body.html).toContain('great & I');
+    });
+  });
+
+  describe('sendAnnouncementEmails', () => {
+    it('should send batch announcement emails through the Resend batch endpoint', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [{ id: 'email-1' }, { id: 'email-2' }] }),
+        text: async () => 'OK',
+        statusText: 'OK',
+      } as unknown as Response);
+
+      const result = await sendAnnouncementEmails({
+        recipientEmails: ['alpha@example.com', 'charlie@example.com'],
+        subject: 'Club update',
+        messageText: '# Service Update\n\n**Hello members**\n\nRead the [full note](https://meatup.club).\n\n- One\n- Two',
+        resendApiKey: 'test-api-key',
+        senderName: 'Admin User',
+      });
+
+      expect(result).toEqual({ success: true, sentCount: 2 });
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      const fetchCall = (global.fetch as any).mock.calls[0];
+      expect(fetchCall[0]).toBe('https://api.resend.com/emails/batch');
+
+      const request = fetchCall[1];
+      expect(request.method).toBe('POST');
+      expect(request.headers['Authorization']).toBe('Bearer test-api-key');
+      expect(request.headers['Content-Type']).toBe('application/json');
+
+      const body = JSON.parse(request.body);
+      expect(body).toHaveLength(2);
+      expect(body[0]).toEqual(
+        expect.objectContaining({
+          from: 'Admin User <notifications@mail.meatup.club>',
+          to: ['alpha@example.com'],
+          subject: 'Club update',
+          text: '# Service Update\n\n**Hello members**\n\nRead the [full note](https://meatup.club).\n\n- One\n- Two',
+        })
+      );
+      expect(body[0].html).toContain('<h1');
+      expect(body[0].html).toContain('Service Update');
+      expect(body[0].html).toContain('<strong');
+      expect(body[0].html).toContain('Hello members');
+      expect(body[0].html).toContain('href="https://meatup.club"');
+      expect(body[0].html).toContain('<ul');
+      expect(body[0].html).toContain('One');
+    });
+
+    it('should report batch send failures', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: 'Too Many Requests',
+        headers: new Headers(),
+        text: async () => 'slow down',
+      } as unknown as Response);
+
+      const result = await sendAnnouncementEmails({
+        recipientEmails: ['alpha@example.com'],
+        subject: 'Club update',
+        messageText: 'Hello members',
+        resendApiKey: 'test-api-key',
+      });
+
+      expect(result).toEqual({
+        success: false,
+        sentCount: 0,
+        error: 'Failed to send announcement email: Too Many Requests',
+      });
     });
   });
 

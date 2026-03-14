@@ -15,6 +15,7 @@ export default [
   route("api/places/photo", "routes/api.places.photo.tsx"),
   route("api/admin/setup-resend", "routes/api.admin.setup-resend.tsx"),
   route("api/polls", "routes/api.polls.tsx"),
+  route("api/webhooks/email-delivery", "routes/api.webhooks.email-delivery.tsx"),
   route("api/webhooks/email-rsvp", "routes/api.webhooks.email-rsvp.tsx"),
   route("api/webhooks/sms", "routes/api.webhooks.sms.tsx"),
   route("dashboard", "routes/dashboard.tsx", [
@@ -29,6 +30,7 @@ export default [
     route("profile", "routes/dashboard.profile.tsx"),
     route("admin", "routes/dashboard.admin._index.tsx"),
     route("admin/setup", "routes/dashboard.admin.setup.tsx"),
+    route("admin/announcements", "routes/dashboard.admin.announcements.tsx"),
     route("admin/events", "routes/dashboard.admin.events.tsx"),
     route("admin/members", "routes/dashboard.admin.members.tsx"),
     route("admin/polls", "routes/dashboard.admin.polls.tsx"),

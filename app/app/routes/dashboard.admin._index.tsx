@@ -1,4 +1,4 @@
-import { Link } from "react-router";
+import { Link, isRouteErrorResponse } from "react-router";
 import type { Route } from "./+types/dashboard.admin._index";
 import { requireAdmin } from "../lib/auth.server";
 import { Card, Alert } from "../components/ui";
@@ -153,6 +153,36 @@ export default function AdminPage() {
         </Link>
       </Alert>
     </main>
+    </AdminLayout>
+  );
+}
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  let message = "Something went wrong loading the admin panel.";
+  let details = "Please refresh and try again.";
+
+  if (isRouteErrorResponse(error)) {
+    message = `Unable to load admin panel (${error.status})`;
+    details = error.statusText || details;
+  } else if (error instanceof Error) {
+    details = error.message;
+  }
+
+  return (
+    <AdminLayout>
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <Alert variant="error">
+          <div className="space-y-3">
+            <p className="font-semibold">{message}</p>
+            <p className="text-sm">{details}</p>
+            <div className="pt-1">
+              <Link to="/dashboard" className="btn-primary">
+                Back to Dashboard
+              </Link>
+            </div>
+          </div>
+        </Alert>
+      </main>
     </AdminLayout>
   );
 }

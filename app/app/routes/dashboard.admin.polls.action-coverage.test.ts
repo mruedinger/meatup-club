@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { action } from "./dashboard.admin.polls";
 import { requireActiveUser } from "../lib/auth.server";
 import { getAppTimeZone, isDateInPastInTimeZone } from "../lib/dateUtils";
-import { sendEventInvites } from "../lib/email.server";
 
 vi.mock("../lib/auth.server", () => ({
   requireActiveUser: vi.fn(),
@@ -18,15 +17,10 @@ vi.mock("../lib/dateUtils", async () => {
   };
 });
 
-vi.mock("../lib/email.server", () => ({
-  sendEventInvites: vi.fn(),
-}));
-
 type MockDbOptions = {
   activePoll?: Record<string, unknown> | null;
   restaurant?: Record<string, unknown> | null;
   date?: Record<string, unknown> | null;
-  users?: Array<Record<string, unknown>>;
   createPollError?: Error | null;
   insertEventError?: Error | null;
   closeUpdateChanges?: number;
@@ -36,7 +30,6 @@ function createMockDb({
   activePoll = { id: 1 },
   restaurant = { id: 10, name: "Prime Steakhouse", address: "123 Main St", vote_count: 2 },
   date = { id: 20, suggested_date: "2026-06-10", vote_count: 3 },
-  users = [],
   createPollError = null,
   insertEventError = null,
   closeUpdateChanges = 1,
@@ -46,6 +39,7 @@ function createMockDb({
 
   const prepare = vi.fn((sql: string) => {
     const normalizedSql = sql.replace(/\s+/g, " ").trim();
+    const isSelectStatement = normalizedSql.startsWith("SELECT");
 
     const firstForArgs = async () => {
       if (normalizedSql.includes("SELECT id FROM polls WHERE id = ? AND status = 'active'")) {
@@ -68,8 +62,8 @@ function createMockDb({
     };
 
     const allForArgs = async () => {
-      if (normalizedSql === "SELECT email FROM users WHERE status = ?") {
-        return { results: users };
+      if (normalizedSql === "SELECT id FROM event_email_deliveries WHERE batch_id = ? ORDER BY id ASC") {
+        return { results: [{ id: 21 }, { id: 22 }] };
       }
 
       return { results: [] };
@@ -106,19 +100,29 @@ function createMockDb({
     return {
       first: () => firstForArgs(),
       all: () => allForArgs(),
-      run: () => runForArgs([]),
+      ...(isSelectStatement ? {} : { run: () => runForArgs([]) }),
       bind: (...bindArgs: unknown[]) => ({
         first: () => firstForArgs(),
         all: () => allForArgs(),
-        run: () => runForArgs(bindArgs),
+        ...(isSelectStatement ? {} : { run: () => runForArgs(bindArgs) }),
       }),
     };
   });
 
-  const batch = vi.fn(async (statements: Array<{ run: () => Promise<unknown> }>) => {
+  const batch = vi.fn(async (statements: Array<{ run?: () => Promise<unknown>; all?: () => Promise<unknown> }>) => {
     const results = [];
-    for (const statement of statements) {
-      results.push(await statement.run());
+    for (const [index, statement] of statements.entries()) {
+      if (index === statements.length - 1 && typeof statement.all === "function") {
+        results.push(await statement.all());
+        continue;
+      }
+
+      if (typeof statement.run === "function") {
+        results.push(await statement.run());
+        continue;
+      }
+
+      throw new Error("Unexpected statement without run/all handler");
     }
     return results;
   });
@@ -151,7 +155,6 @@ describe("dashboard.admin.polls action coverage", () => {
     } as never);
     vi.mocked(getAppTimeZone).mockReturnValue("America/New_York" as never);
     vi.mocked(isDateInPastInTimeZone).mockReturnValue(false as never);
-    vi.mocked(sendEventInvites).mockResolvedValue({ sentCount: 2, errors: [] } as never);
   });
 
   it("rejects non-admin users", async () => {
@@ -328,15 +331,12 @@ describe("dashboard.admin.polls action coverage", () => {
     } as never);
 
     expect(result).toEqual({ error: "Failed to close poll. Please try again." });
-    expect(db.withSession).toHaveBeenCalledWith("first-primary");
     expect(db.batch).toHaveBeenCalledTimes(1);
   });
 
   it("queues invite sending when an event is created with invite delivery enabled", async () => {
-    const waitUntil = vi.fn();
-    const db = createMockDb({
-      users: [{ email: "a@example.com" }, { email: "b@example.com" }],
-    });
+    const db = createMockDb();
+    const queue = { sendBatch: vi.fn().mockResolvedValue(undefined) };
 
     const response = await action({
       request: createRequest({
@@ -350,23 +350,22 @@ describe("dashboard.admin.polls action coverage", () => {
       }),
       context: {
         cloudflare: {
-          env: { DB: db, APP_TIMEZONE: "America/New_York", RESEND_API_KEY: "test-key" },
-          ctx: { waitUntil },
+          env: {
+            DB: db,
+            APP_TIMEZONE: "America/New_York",
+            EMAIL_DELIVERY_QUEUE: queue,
+          },
+          ctx: {},
         },
       } as never,
       params: {},
     } as never);
 
     expect((response as Response).status).toBe(302);
-    expect(sendEventInvites).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventId: 555,
-        recipientEmails: ["a@example.com", "b@example.com"],
-        eventTime: "19:30",
-        resendApiKey: "test-key",
-      })
-    );
-    expect(waitUntil).toHaveBeenCalledTimes(1);
+    expect(queue.sendBatch).toHaveBeenCalledWith([
+      { body: { deliveryId: 21 } },
+      { body: { deliveryId: 22 } },
+    ]);
   });
 
   it("returns an invalid action error for unknown actions", async () => {

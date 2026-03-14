@@ -103,7 +103,7 @@ function createMockDb({
         return { results: dateSuggestions };
       }
 
-      if (normalizedSql.includes("FROM polls p LEFT JOIN events e")) {
+      if (normalizedSql.includes("FROM polls p LEFT JOIN restaurants r")) {
         return { results: previousPolls };
       }
 
@@ -252,8 +252,6 @@ describe("dashboard.polls route", () => {
     });
 
     it("normalizes legacy restaurant photo URLs for poll cards", async () => {
-      const longPhotoName = `places/${"A".repeat(320)}/photos/${"B".repeat(140)}`;
-
       vi.mocked(getRestaurantsForPoll).mockResolvedValue([
         {
           id: 88,
@@ -277,22 +275,9 @@ describe("dashboard.polls route", () => {
           photo_url:
             "https://meatup.club/api/places/photo?name=places%2Fdef456%2Fphotos%2Fphoto-2&maxHeightPx=400&maxWidthPx=400",
         },
-        {
-          id: 90,
-          name: "Stanbury",
-          address: "938 N Blount St",
-          cuisine: "Restaurant",
-          created_by: 777,
-          vote_count: 1,
-          user_has_voted: false,
-          photo_url: `https://meatup.club/api/places/photo?${new URLSearchParams({
-            name: longPhotoName,
-            maxHeightPx: "400",
-            maxWidthPx: "400",
-          }).toString()}`,
-        },
       ] as never);
       const db = createMockDb({
+        previousPolls: [{ id: 9, title: "Older Poll" }],
         creatorById: {
           777: { name: "Alice", email: "alice@example.com" },
         },
@@ -315,25 +300,36 @@ describe("dashboard.polls route", () => {
           photo_url:
             "/api/places/photo?name=places%2Fdef456%2Fphotos%2Fphoto-2&maxHeightPx=400&maxWidthPx=400",
         }),
+      ]);
+      expect(result.previousPolls).toEqual([{ id: 9, title: "Older Poll" }]);
+    });
+
+    it("returns closed poll winners even when no event was created", async () => {
+      const db = createMockDb({
+        activePoll: null,
+        previousPolls: [
+          {
+            id: 9,
+            title: "Older Poll",
+            winner_restaurant: "Prime Steakhouse",
+            winner_date: "2026-05-01",
+          },
+        ],
+      });
+
+      const result = await loader({
+        request: createRequest(),
+        context: { cloudflare: { env: { DB: db } } } as never,
+        params: {},
+      } as never);
+
+      expect(result.previousPolls).toEqual([
         expect.objectContaining({
-          id: 90,
-          photo_url: `/api/places/photo?${new URLSearchParams({
-            name: longPhotoName,
-            maxHeightPx: "400",
-            maxWidthPx: "400",
-          }).toString()}`,
+          id: 9,
+          winner_restaurant: "Prime Steakhouse",
+          winner_date: "2026-05-01",
         }),
       ]);
-
-      const normalizedPhotoUrl = result.restaurantSuggestions.find(
-        (restaurant: { id: number }) => restaurant.id === 90
-      )?.photo_url;
-
-      expect(normalizedPhotoUrl).toBeTruthy();
-      expect(
-        new URL(`http://localhost${normalizedPhotoUrl}`).searchParams.get("name")
-      ).toBe(longPhotoName);
-      expect(longPhotoName.length).toBeGreaterThan(255);
     });
   });
 

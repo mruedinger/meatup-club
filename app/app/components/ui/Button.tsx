@@ -23,6 +23,10 @@ const sizeClasses: Record<ButtonSize, string> = {
   lg: "!py-3 !px-6 !text-sm",
 };
 
+/**
+ * Button primitive with shared variants and sizes.
+ * @example <Button variant="primary">Save</Button>
+ */
 export function Button({
   variant = "primary",
   size = "md",

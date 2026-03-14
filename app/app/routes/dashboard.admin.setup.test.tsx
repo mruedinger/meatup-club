@@ -102,8 +102,8 @@ describe("dashboard.admin.setup route", () => {
             success: true,
             message: "Configured",
             details: {
-              email: "rsvp@mail.meatup.club",
-              forwardsTo: "https://meatup.club/api/webhook",
+              deliveryWebhookUrl: "https://meatup.club/api/webhooks/email-delivery",
+              deliveryWebhookEvents: ["email.sent", "email.delivered"],
               domain: "mail.meatup.club",
             },
           }}
@@ -112,9 +112,10 @@ describe("dashboard.admin.setup route", () => {
     );
 
     expect(screen.getByText("Configured")).toBeInTheDocument();
-    expect(screen.getAllByText("rsvp@mail.meatup.club")).toHaveLength(2);
+    expect(screen.getByText("https://meatup.club/api/webhooks/email-delivery")).toBeInTheDocument();
+    expect(screen.getByText("email.sent, email.delivered")).toBeInTheDocument();
 
-    fireEvent.submit(screen.getByRole("button", { name: "Configure Resend Inbound Email" }).closest("form")!);
+    fireEvent.submit(screen.getByRole("button", { name: "Configure Resend Email" }).closest("form")!);
 
     expect(screen.getByRole("button", { name: "Configuring..." })).toBeDisabled();
   });
@@ -126,7 +127,7 @@ describe("dashboard.admin.setup route", () => {
           actionData={{
             success: false,
             error: "Setup failed",
-            details: { code: 500 },
+            details: "provider failed",
             availableDomains: ["mail.meatup.club", "example.com"],
           }}
         />
@@ -134,7 +135,7 @@ describe("dashboard.admin.setup route", () => {
     );
 
     expect(screen.getByText("Setup failed")).toBeInTheDocument();
-    expect(screen.getByText("mail.meatup.club")).toBeInTheDocument();
+    expect(screen.getAllByText("mail.meatup.club")).toHaveLength(2);
     expect(screen.getByText("example.com")).toBeInTheDocument();
   });
 });

@@ -3,6 +3,15 @@ import { getUser } from "../lib/auth.server";
 import { withCache } from "../lib/cache.server";
 import { enforceRateLimit } from "../lib/rate-limit.server";
 
+interface PlacesSearchResponse {
+  places?: Array<{
+    id: string;
+    displayName?: { text?: string };
+    formattedAddress?: string;
+    types?: string[];
+  }>;
+}
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const input = url.searchParams.get("input")?.trim();
@@ -92,13 +101,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           throw new Error("Failed to fetch places");
         }
 
-        const data = (await response.json()) as any;
+        const data = (await response.json()) as PlacesSearchResponse;
         return Response.json(data);
       },
       "public, max-age=600, stale-while-revalidate=3600"
     );
   } catch (error) {
-    console.error("Places search error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("Places search failed", { message });
     return Response.json(
       { error: "Failed to search places" },
       { status: 500 }

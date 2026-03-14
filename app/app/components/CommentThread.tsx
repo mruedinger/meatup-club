@@ -1,5 +1,6 @@
 import { Form } from "react-router";
 import { Card, Button, UserAvatar } from "./ui";
+import { confirmAction } from "../lib/confirm.client";
 
 interface CommentUser {
   id: number;
@@ -73,7 +74,7 @@ export function CommentThread({
                       type="submit"
                       className="text-xs text-red-600 hover:text-red-700"
                       onClick={(e) => {
-                        if (!confirm('Delete this comment and all replies?')) {
+                        if (!confirmAction('Delete this comment and all replies?')) {
                           e.preventDefault();
                         }
                       }}

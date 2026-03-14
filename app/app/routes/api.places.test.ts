@@ -243,6 +243,7 @@ describe("Places API behavior", () => {
   it("returns a 500 when the details upstream request fails", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
+      status: 429,
       text: async () => "quota exceeded",
     } as never);
 
@@ -257,7 +258,9 @@ describe("Places API behavior", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Failed to fetch place details",
     });
-    expect(consoleErrorSpy).toHaveBeenCalledWith("Place details error:", "quota exceeded");
+    expect(consoleErrorSpy).toHaveBeenCalledWith("Place details failed", {
+      message: "Places details request failed with status 429",
+    });
   });
 
   it("proxies place photos when Google returns media successfully", async () => {
@@ -380,8 +383,8 @@ describe("Places API behavior", () => {
     await expect(response.text()).resolves.toBe("fresh-image");
     await Promise.allSettled(waitUntilPromises);
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "Failed to update photo_url:",
-      expect.any(Error)
+      "Failed to update photo URL",
+      { message: "update failed" }
     );
   });
 

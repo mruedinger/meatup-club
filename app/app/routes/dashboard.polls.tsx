@@ -1,8 +1,7 @@
-import { Form, useSubmit } from "react-router";
+import { Form, Link, isRouteErrorResponse, redirect, useSubmit } from "react-router";
 import { useState } from "react";
 import type { Route } from "./+types/dashboard.polls";
 import { requireActiveUser } from "../lib/auth.server";
-import { redirect } from "react-router";
 import { formatDateForDisplay, formatDateTimeForDisplay } from "../lib/dateUtils";
 import { DateCalendar } from "../components/DateCalendar";
 import { DoodleView } from "../components/DoodleView";
@@ -22,6 +21,25 @@ import { Alert, Badge, Button, Card, EmptyState, PageHeader, UserAvatar } from "
 import { CommentSection } from "../components/CommentSection";
 import type { Poll } from "../lib/types";
 import { normalizeRestaurantPhotoUrl } from "../lib/restaurant-photo-url";
+
+interface PollDateSuggestion {
+  id: number;
+  user_id: number;
+  poll_id: number;
+  suggested_date: string;
+  suggested_by_name: string | null;
+  suggested_by_email: string;
+  vote_count: number;
+  user_has_voted: number;
+}
+
+interface PollDateVote {
+  date_suggestion_id: number;
+  user_id: number;
+  suggested_date: string;
+  user_name: string | null;
+  user_email: string;
+}
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = await requireActiveUser(request, context);
@@ -79,10 +97,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .prepare(`
       SELECT
         p.*,
-        e.restaurant_name as winner_restaurant,
-        e.event_date as winner_date
+        r.name as winner_restaurant,
+        ds.suggested_date as winner_date
       FROM polls p
-      LEFT JOIN events e ON p.created_event_id = e.id
+      LEFT JOIN restaurants r ON p.winning_restaurant_id = r.id
+      LEFT JOIN date_suggestions ds ON p.winning_date_id = ds.id
       WHERE p.status = 'closed'
       ORDER BY p.created_at DESC
       LIMIT 10
@@ -112,12 +131,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ? await getComments(db, 'poll', activePoll.id)
     : [];
 
+  const dateSuggestions = (dateSuggestionsResult.results || []) as unknown as PollDateSuggestion[];
+  const dateVotes = (dateVotesResult.results || []) as unknown as PollDateVote[];
+
   return {
-    dateSuggestions: dateSuggestionsResult.results || [],
+    dateSuggestions,
     restaurantSuggestions,
     activePoll: activePoll || null,
     previousPolls: previousPollsResult.results || [],
-    dateVotes: dateVotesResult.results || [],
+    dateVotes,
     comments,
     currentUser: {
       id: user.id,
@@ -622,7 +644,7 @@ export default function PollsPage({ loaderData, actionData }: Route.ComponentPro
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div>
                   <DateCalendar
-                    suggestions={dateSuggestions as any}
+                    suggestions={dateSuggestions}
                     activePollId={activePoll.id}
                     currentUserId={currentUser.id}
                     onDateClick={handleDateClick}
@@ -630,8 +652,8 @@ export default function PollsPage({ loaderData, actionData }: Route.ComponentPro
                 </div>
                 <div>
                   <DoodleView
-                    dateSuggestions={dateSuggestions as any}
-                    dateVotes={dateVotes as any}
+                    dateSuggestions={dateSuggestions}
+                    dateVotes={dateVotes}
                     currentUserId={currentUser.id}
                     onVoteToggle={handleDoodleVoteToggle}
                   />
@@ -762,6 +784,60 @@ export default function PollsPage({ loaderData, actionData }: Route.ComponentPro
           </div>
         </div>
       )}
+    </main>
+  );
+}
+
+export function HydrateFallback() {
+  return (
+    <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <PageHeader
+        title="Polls"
+        description="Vote on dates and restaurants for upcoming meetups"
+      />
+      <div className="space-y-6">
+        <Card className="p-6 animate-pulse bg-muted/30">
+          <div className="h-6 w-48 bg-muted rounded mb-4" />
+          <div className="h-4 w-80 bg-muted rounded mb-2" />
+          <div className="h-4 w-72 bg-muted rounded" />
+        </Card>
+        <Card className="p-6 animate-pulse bg-muted/30">
+          <div className="h-6 w-56 bg-muted rounded mb-4" />
+          <div className="h-4 w-64 bg-muted rounded mb-2" />
+          <div className="h-4 w-52 bg-muted rounded" />
+        </Card>
+      </div>
+    </main>
+  );
+}
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  let message = "Something went wrong loading polls.";
+  let details = "Please refresh and try again.";
+
+  if (isRouteErrorResponse(error)) {
+    message = `Unable to load polls (${error.status})`;
+    details = error.statusText || details;
+  } else if (error instanceof Error) {
+    details = error.message;
+  }
+
+  return (
+    <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <PageHeader title="Polls" description="Vote on dates and restaurants for upcoming meetups" />
+      <Card className="p-6">
+        <Alert variant="error">
+          <div className="space-y-3">
+            <p className="font-semibold">{message}</p>
+            <p className="text-sm">{details}</p>
+            <div className="pt-1">
+              <Link to="/dashboard" className="btn-primary">
+                Back to Dashboard
+              </Link>
+            </div>
+          </div>
+        </Alert>
+      </Card>
     </main>
   );
 }

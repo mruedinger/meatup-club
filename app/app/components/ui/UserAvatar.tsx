@@ -26,6 +26,10 @@ function getInitials(name: string | null | undefined, email?: string): string {
   return "?";
 }
 
+/**
+ * User avatar that falls back to initials when no image is available.
+ * @example <UserAvatar src={user.picture} name={user.name} email={user.email} />
+ */
 export function UserAvatar({
   src,
   name,
