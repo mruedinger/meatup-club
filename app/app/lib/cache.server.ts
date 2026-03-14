@@ -5,6 +5,18 @@
  * that was duplicated across the three Google Places API routes.
  */
 
+interface CacheContext {
+  cloudflare: {
+    ctx: {
+      waitUntil(promise: Promise<unknown>): void;
+    };
+  };
+}
+
+interface CloudflareCacheStorage extends CacheStorage {
+  default: Cache;
+}
+
 /**
  * Execute `fetcher` with Cloudflare Cache API caching.
  *
@@ -15,11 +27,11 @@
  */
 export async function withCache(
   request: Request,
-  context: any,
+  context: CacheContext,
   fetcher: () => Promise<Response>,
   cacheControl: string
 ): Promise<Response> {
-  const cache = (caches as any).default;
+  const cache = (caches as unknown as CloudflareCacheStorage).default;
   const cacheKey = new Request(request.url, { method: "GET" });
 
   const cached = await cache.match(cacheKey);

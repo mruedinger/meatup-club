@@ -5,6 +5,18 @@ import { requireAdmin } from "../lib/auth.server";
 import { Alert, Button, Card, PageHeader } from "../components/ui";
 import { AdminLayout } from "../components/AdminLayout";
 
+interface RestaurantBackfillRow {
+  id: number;
+  name: string;
+  google_place_id: string;
+}
+
+interface PlaceHoursResponse {
+  currentOpeningHours?: {
+    weekdayDescriptions?: string[];
+  };
+}
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   await requireAdmin(request, context);
   return {};
@@ -32,7 +44,8 @@ export async function action({ request, context }: Route.ActionArgs) {
   };
 
   if (restaurants.results) {
-    for (const restaurant of restaurants.results as any[]) {
+    const restaurantRows = (restaurants.results || []) as unknown as RestaurantBackfillRow[];
+    for (const restaurant of restaurantRows) {
       try {
         // Fetch place details from Google Places API
         const response = await fetch(
@@ -46,7 +59,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         );
 
         if (response.ok) {
-          const data = (await response.json()) as any;
+          const data = (await response.json()) as PlaceHoursResponse;
           const openingHours = data.currentOpeningHours?.weekdayDescriptions
             ? JSON.stringify(data.currentOpeningHours.weekdayDescriptions)
             : null;

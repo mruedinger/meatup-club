@@ -28,6 +28,7 @@ describe('Route Health - All Routes Should Load Without 404', () => {
         env: {
           DB: createMockDB(),
           RESEND_API_KEY: 'test-api-key',
+          RESEND_DELIVERY_WEBHOOK_SECRET: 'test-delivery-webhook-secret',
           GOOGLE_PLACES_API_KEY: 'test-places-key',
           RESEND_WEBHOOK_SECRET: 'test-webhook-secret',
         },
@@ -111,6 +112,7 @@ describe('Route Health - All Routes Should Load Without 404', () => {
   describe('Admin Routes', () => {
     const adminRoutes = [
       { path: '/dashboard/admin', file: '../app/routes/dashboard.admin._index' },
+      { path: '/dashboard/admin/announcements', file: '../app/routes/dashboard.admin.announcements' },
       { path: '/dashboard/admin/analytics', file: '../app/routes/dashboard.admin.analytics' },
       { path: '/dashboard/admin/backfill-hours', file: '../app/routes/dashboard.admin.backfill-hours' },
       { path: '/dashboard/admin/content', file: '../app/routes/dashboard.admin.content' },
@@ -148,6 +150,11 @@ describe('Route Health - All Routes Should Load Without 404', () => {
 
     it('/api/webhooks/email-rsvp should have action', async () => {
       const { action } = await import('../app/routes/api.webhooks.email-rsvp');
+      expect(action).toBeDefined();
+    });
+
+    it('/api/webhooks/email-delivery should have action', async () => {
+      const { action } = await import('../app/routes/api.webhooks.email-delivery');
       expect(action).toBeDefined();
     });
   });
@@ -191,6 +198,7 @@ describe('Route Health - All Routes Should Load Without 404', () => {
     it('all admin routes should export proper loaders', async () => {
       const routes = [
         '../app/routes/dashboard.admin._index',
+        '../app/routes/dashboard.admin.announcements',
         '../app/routes/dashboard.admin.analytics',
         '../app/routes/dashboard.admin.events',
         '../app/routes/dashboard.admin.members',
@@ -206,6 +214,7 @@ describe('Route Health - All Routes Should Load Without 404', () => {
 
     it('routes with forms should export actions', async () => {
       const routesWithActions = [
+        { path: '../app/routes/dashboard.admin.announcements', name: 'announcements' },
         { path: '../app/routes/dashboard.admin.events', name: 'events' },
         { path: '../app/routes/dashboard.admin.members', name: 'members' },
         { path: '../app/routes/dashboard.admin.polls', name: 'polls' },

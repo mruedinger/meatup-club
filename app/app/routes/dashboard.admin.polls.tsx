@@ -1,7 +1,16 @@
 import { Form, Link } from "react-router";
+import type { D1Result } from "@cloudflare/workers-types";
 import type { Route } from "./+types/dashboard.admin.polls";
 import { requireActiveUser } from "../lib/auth.server";
+import { buildCreateEventStatementForActivePoll } from "../lib/events.server";
 import { redirect } from "react-router";
+import {
+  buildSelectStagedDeliveryIdsStatement,
+  buildStageEventInviteDeliveriesForLastInsertedEventStatement,
+  enqueueStagedEventEmailBatch,
+  toStagedEventEmailBatchFromQueryResult,
+  type StagedEventEmailBatch,
+} from "../lib/event-email-delivery.server";
 import VoteLeadersCard from "../components/VoteLeadersCard";
 import { getActivePollLeaders } from "../lib/polls.server";
 import { formatDateForDisplay, formatDateTimeForDisplay, getAppTimeZone, isDateInPastInTimeZone } from "../lib/dateUtils";
@@ -252,85 +261,134 @@ export async function action({ request, context }: Route.ActionArgs) {
 
     let createdEventId: number | null = null;
     try {
-      await db.prepare('BEGIN TRANSACTION').run();
+      let stagedInviteBatch: StagedEventEmailBatch | null = null;
 
       if (createEvent && selectedRestaurant && selectedDate) {
-        const eventResult = await db
+        const inviteBatchId = sendInvites ? crypto.randomUUID() : null;
+        const closeStatements = [
+          buildCreateEventStatementForActivePoll(db, {
+            input: {
+              restaurantName: selectedRestaurant.name as string,
+              restaurantAddress: (selectedRestaurant.address as string | null) || null,
+              eventDate: selectedDate.suggested_date as string,
+              eventTime,
+              status: 'upcoming',
+            },
+            createdBy: user.id,
+            pollId: parsedPollId,
+          }),
+          db
+            .prepare(`
+              UPDATE polls
+              SET status = 'closed',
+                  closed_by = ?,
+                  closed_at = CURRENT_TIMESTAMP,
+                  winning_restaurant_id = ?,
+                  winning_date_id = ?,
+                  created_event_id = last_insert_rowid()
+              WHERE id = ? AND status = 'active'
+            `)
+            .bind(
+              user.id,
+              parsedWinningRestaurantId,
+              parsedWinningDateId,
+              parsedPollId
+            ),
+          db
+            .prepare(`
+              SELECT created_event_id
+              FROM polls
+              WHERE id = ?
+            `)
+            .bind(parsedPollId),
+        ];
+
+        if (inviteBatchId) {
+          closeStatements.push(
+            buildStageEventInviteDeliveriesForLastInsertedEventStatement(db, {
+              batchId: inviteBatchId,
+              details: {
+                restaurantName: selectedRestaurant.name as string,
+                restaurantAddress: (selectedRestaurant.address as string | null) || null,
+                eventDate: selectedDate.suggested_date as string,
+                eventTime,
+              },
+            }),
+            buildSelectStagedDeliveryIdsStatement(db, inviteBatchId)
+          );
+        }
+
+        const closeResults = await db.batch(closeStatements);
+        const createEventResult = closeResults[0] as D1Result;
+        const closePollResult = closeResults[1] as D1Result;
+
+        if (
+          (createEventResult.meta?.changes ?? 0) === 0 ||
+          (closePollResult.meta?.changes ?? 0) === 0
+        ) {
+          throw new Error('Poll close failed due to concurrent status change');
+        }
+
+        const createdEventRow = (
+          (closeResults[2] as D1Result<{ created_event_id: number | null }>).results || []
+        )[0];
+        createdEventId = Number(createdEventRow?.created_event_id ?? 0) || null;
+
+        if (!createdEventId) {
+          throw new Error('Poll close failed to persist the created event id');
+        }
+
+        if (inviteBatchId) {
+          stagedInviteBatch = toStagedEventEmailBatchFromQueryResult(
+            inviteBatchId,
+            'invite',
+            closeResults[closeResults.length - 1] as D1Result<{ id: number }>
+          );
+        }
+      } else {
+        const closeResult = await db
           .prepare(`
-            INSERT INTO events (restaurant_name, restaurant_address, event_date, event_time, status)
-            VALUES (?, ?, ?, ?, 'upcoming')
+            UPDATE polls
+            SET status = 'closed',
+                closed_by = ?,
+                closed_at = CURRENT_TIMESTAMP,
+                winning_restaurant_id = ?,
+                winning_date_id = ?,
+                created_event_id = ?
+            WHERE id = ? AND status = 'active'
           `)
-          .bind(selectedRestaurant.name, selectedRestaurant.address, selectedDate.suggested_date, eventTime)
+          .bind(
+            user.id,
+            parsedWinningRestaurantId,
+            parsedWinningDateId,
+            createdEventId,
+            parsedPollId
+          )
           .run();
 
-        createdEventId = eventResult.meta.last_row_id;
-      }
-
-      const closeResult = await db
-        .prepare(`
-          UPDATE polls
-          SET status = 'closed',
-              closed_by = ?,
-              closed_at = CURRENT_TIMESTAMP,
-              winning_restaurant_id = ?,
-              winning_date_id = ?,
-              created_event_id = ?
-          WHERE id = ? AND status = 'active'
-        `)
-        .bind(
-          user.id,
-          parsedWinningRestaurantId,
-          parsedWinningDateId,
-          createdEventId,
-          parsedPollId
-        )
-        .run();
-
-      if ((closeResult.meta?.changes ?? 0) === 0) {
-        throw new Error('Poll close failed due to concurrent status change');
-      }
-
-      await db.prepare('COMMIT').run();
-    } catch (error) {
-      await db.prepare('ROLLBACK').run().catch(() => null);
-      console.error('Failed to close poll transaction:', error);
-      return { error: 'Failed to close poll. Please try again.' };
-    }
-
-    if (sendInvites && createdEventId && selectedRestaurant && selectedDate) {
-      const { sendEventInvites } = await import('../lib/email.server');
-
-      const usersResult = await db
-        .prepare('SELECT email FROM users WHERE status = ?')
-        .bind('active')
-        .all();
-
-      if (usersResult.results && usersResult.results.length > 0) {
-        const resendApiKey = context.cloudflare.env.RESEND_API_KEY;
-        const invitePromise = sendEventInvites({
-          eventId: Number(createdEventId),
-          restaurantName: selectedRestaurant.name as string,
-          restaurantAddress: (selectedRestaurant.address as string | null),
-          eventDate: selectedDate.suggested_date as string,
-          eventTime: eventTime,
-          recipientEmails: usersResult.results.map((u: any) => u.email),
-          resendApiKey: resendApiKey || "",
-        }).then(result => {
-          console.log(`Sent ${result.sentCount} calendar invites for event ${createdEventId}`);
-          if (result.errors.length > 0) {
-            console.error('Some invites failed:', result.errors);
-          }
-          return result;
-        }).catch(err => {
-          console.error('Failed to send calendar invites:', err);
-        });
-
-        if (context.cloudflare.ctx?.waitUntil) {
-          context.cloudflare.ctx.waitUntil(invitePromise);
-        } else {
-          await invitePromise;
+        if ((closeResult.meta?.changes ?? 0) === 0) {
+          throw new Error('Poll close failed due to concurrent status change');
         }
       }
+
+      try {
+        await enqueueStagedEventEmailBatch(
+          {
+            db,
+            queue: context.cloudflare.env.EMAIL_DELIVERY_QUEUE,
+          },
+          stagedInviteBatch
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('Failed to enqueue staged poll-close invite deliveries', {
+          eventId: createdEventId,
+          message,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to close poll transaction:', error);
+      return { error: 'Failed to close poll. Please try again.' };
     }
 
     return redirect('/dashboard/admin/polls');

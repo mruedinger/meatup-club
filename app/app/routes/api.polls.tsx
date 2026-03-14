@@ -1,5 +1,7 @@
+import type { D1Result } from "@cloudflare/workers-types";
 import type { Route } from "./+types/api.polls";
 import { requireActiveUser } from "../lib/auth.server";
+import { buildCreateEventStatementForActivePoll } from "../lib/events.server";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   await requireActiveUser(request, context);
@@ -133,15 +135,15 @@ export async function action({ request, context }: Route.ActionArgs) {
 
     // If creating an event, get the winner details and create event
     if (createEvent && parsedWinningRestaurantId && parsedWinningDateId) {
-      const restaurant = await db
+      const restaurant = (await db
         .prepare(`SELECT * FROM restaurants WHERE id = ?`)
         .bind(parsedWinningRestaurantId)
-        .first();
+        .first()) as { name: string; address: string | null } | null;
 
-      const date = await db
+      const date = (await db
         .prepare(`SELECT * FROM date_suggestions WHERE id = ? AND poll_id = ?`)
         .bind(parsedWinningDateId, parsedPollId)
-        .first();
+        .first()) as { suggested_date: string } | null;
 
       if (!restaurant || !date) {
         return Response.json(
@@ -151,45 +153,63 @@ export async function action({ request, context }: Route.ActionArgs) {
       }
 
       try {
-        await db.prepare('BEGIN TRANSACTION').run();
+        const closeResults = await db.batch([
+          buildCreateEventStatementForActivePoll(db, {
+            input: {
+              restaurantName: restaurant.name,
+              restaurantAddress: restaurant.address,
+              eventDate: date.suggested_date,
+              eventTime: "18:00",
+              status: "upcoming",
+            },
+            createdBy: user.id,
+            pollId: parsedPollId,
+          }),
+          db
+            .prepare(`
+              UPDATE polls
+              SET status = 'closed',
+                  closed_by = ?,
+                  closed_at = CURRENT_TIMESTAMP,
+                  winning_restaurant_id = ?,
+                  winning_date_id = ?,
+                  created_event_id = last_insert_rowid()
+              WHERE id = ? AND status = 'active'
+            `)
+            .bind(
+              user.id,
+              parsedWinningRestaurantId,
+              parsedWinningDateId,
+              parsedPollId
+            ),
+          db
+            .prepare(`
+              SELECT created_event_id
+              FROM polls
+              WHERE id = ?
+            `)
+            .bind(parsedPollId),
+        ]);
 
-        const eventResult = await db
-          .prepare(`
-            INSERT INTO events (restaurant_name, restaurant_address, event_date, status)
-            VALUES (?, ?, ?, 'upcoming')
-          `)
-          .bind(restaurant.name, restaurant.address, date.suggested_date)
-          .run();
+        const createEventResult = closeResults[0] as D1Result;
+        const closeResult = closeResults[1] as D1Result;
 
-        createdEventId = eventResult.meta.last_row_id;
-
-        const closeResult = await db
-          .prepare(`
-            UPDATE polls
-            SET status = 'closed',
-                closed_by = ?,
-                closed_at = CURRENT_TIMESTAMP,
-                winning_restaurant_id = ?,
-                winning_date_id = ?,
-                created_event_id = ?
-            WHERE id = ? AND status = 'active'
-          `)
-          .bind(
-            user.id,
-            parsedWinningRestaurantId,
-            parsedWinningDateId,
-            createdEventId,
-            parsedPollId
-          )
-          .run();
-
-        if ((closeResult.meta?.changes ?? 0) === 0) {
+        if (
+          (createEventResult.meta?.changes ?? 0) === 0 ||
+          (closeResult.meta?.changes ?? 0) === 0
+        ) {
           throw new Error('Poll close failed due to concurrent status change');
         }
 
-        await db.prepare('COMMIT').run();
+        const createdEventRow = (
+          (closeResults[2] as D1Result<{ created_event_id: number | null }>).results || []
+        )[0];
+        createdEventId = Number(createdEventRow?.created_event_id ?? 0) || null;
+
+        if (!createdEventId) {
+          throw new Error('Poll close failed to persist the created event id');
+        }
       } catch (error) {
-        await db.prepare('ROLLBACK').run().catch(() => null);
         return Response.json({ error: 'Failed to close poll' }, { status: 500 });
       }
     } else {

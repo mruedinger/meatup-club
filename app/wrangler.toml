@@ -12,6 +12,18 @@ binding = "DB"
 database_name = "meatup-club-db"
 database_id = "3a6fb3b4-0322-4ab0-b8df-09b5d19af1c1"
 
+[[queues.producers]]
+binding = "EMAIL_DELIVERY_QUEUE"
+queue = "meatup-club-email-delivery"
+
+[[queues.consumers]]
+queue = "meatup-club-email-delivery"
+max_batch_size = 10
+max_batch_timeout = 5
+max_concurrency = 1
+max_retries = 5
+dead_letter_queue = "meatup-club-email-delivery-dlq"
+
 [vars]
 NODE_VERSION = "20"
 APP_TIMEZONE = "America/New_York"

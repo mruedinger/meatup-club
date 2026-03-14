@@ -6,6 +6,7 @@ import {
   UserGroupIcon,
   DocumentTextIcon,
   EnvelopeIcon,
+  MegaphoneIcon,
   ChartBarIcon,
   ArrowLeftIcon,
 } from "@heroicons/react/24/outline";
@@ -20,6 +21,7 @@ const sidebarLinks = [
   { to: "/dashboard/admin/events", label: "Events", icon: CalendarDaysIcon },
   { to: "/dashboard/admin/polls", label: "Polls", icon: ClipboardDocumentCheckIcon },
   { to: "/dashboard/admin/members", label: "Members", icon: UserGroupIcon },
+  { to: "/dashboard/admin/announcements", label: "Announcements", icon: MegaphoneIcon },
   { to: "/dashboard/admin/content", label: "Content", icon: DocumentTextIcon },
   { to: "/dashboard/admin/email-templates", label: "Email Templates", icon: EnvelopeIcon },
   { to: "/dashboard/admin/analytics", label: "Analytics", icon: ChartBarIcon },

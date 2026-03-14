@@ -6,6 +6,10 @@ interface PageHeaderProps {
   actions?: ReactNode;
 }
 
+/**
+ * Standard page heading block with optional actions.
+ * @example <PageHeader title="Events" description="Upcoming meetups" />
+ */
 export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
     <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-8">

@@ -22,6 +22,7 @@ export interface Event {
   event_time: string | null;
   status: string;
   calendar_sequence?: number;
+  created_by: number | null;
   created_at: string;
 }
 

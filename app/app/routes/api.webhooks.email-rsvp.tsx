@@ -3,6 +3,32 @@ import { Webhook } from "svix";
 import { upsertRsvp } from "../lib/rsvps.server";
 import { reserveWebhookDelivery } from "../lib/webhook-idempotency.server";
 
+interface ResendEmailReceivedPayload {
+  type: string;
+  data: {
+    from: string;
+    subject: string;
+    text: string;
+    html?: string;
+  };
+}
+
+interface WebhookUserRow {
+  id: number;
+  email: string;
+  name: string | null;
+}
+
+interface WebhookEventRow {
+  id: number;
+  restaurant_name: string;
+  event_date: string;
+}
+
+interface EventAliasRow {
+  canonical_event_id: number | null;
+}
+
 /**
  * Webhook handler for inbound emails from Resend
  * Parses calendar RSVP responses and updates the database
@@ -45,16 +71,17 @@ export async function action({ request, context }: { request: Request; context: 
         'svix-id': svixId,
         'svix-timestamp': svixTimestamp,
         'svix-signature': svixSignature,
-      }) as any;
+      }) as ResendEmailReceivedPayload;
     } catch (err) {
-      console.error('Webhook signature verification failed:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('Webhook signature verification failed', { message });
       return Response.json(
         { error: 'Invalid signature' },
         { status: 401 }
       );
     }
 
-    console.log('Received email webhook', { type: payload.type });
+    console.log('Received email webhook event', { type: payload.type });
 
     // Only process email.received events
     if (payload.type !== 'email.received') {
@@ -83,22 +110,22 @@ export async function action({ request, context }: { request: Request; context: 
     const user = await db
       .prepare('SELECT id, email, name FROM users WHERE LOWER(email) = ?')
       .bind(userEmail)
-      .first();
+      .first() as WebhookUserRow | null;
 
     if (!user) {
       return Response.json({
         message: 'User not found',
-        email: userEmail
+        email: userEmail,
       }, { status: 404 });
     }
 
     // Extract event ID from UID (format: event-{id}@meatup.club or event-{id}-{timestamp}@meatup.club)
     const uidMatch = rsvpData.eventUid.match(/^event-(\d+)(?:-\d+)?@/);
     if (!uidMatch) {
-      console.log(`Invalid event UID format: ${rsvpData.eventUid}`);
+      console.log('Invalid event UID format in webhook payload');
       return Response.json({
         message: 'Invalid event UID format',
-        uid: rsvpData.eventUid
+        uid: rsvpData.eventUid,
       }, { status: 400 });
     }
 
@@ -109,7 +136,7 @@ export async function action({ request, context }: { request: Request; context: 
     let event = await db
       .prepare('SELECT id, restaurant_name, event_date FROM events WHERE id = ?')
       .bind(eventId)
-      .first();
+      .first() as WebhookEventRow | null;
 
     if (!event) {
       const aliasedEventId = await resolveCanonicalEventId(db, originalEventId);
@@ -119,14 +146,14 @@ export async function action({ request, context }: { request: Request; context: 
         event = await db
           .prepare('SELECT id, restaurant_name, event_date FROM events WHERE id = ?')
           .bind(eventId)
-          .first();
+          .first() as WebhookEventRow | null;
       }
     }
 
     if (!event) {
       return Response.json({
         message: 'Event not found',
-        eventId: originalEventId
+        eventId: originalEventId,
       }, { status: 404 });
     }
 
@@ -143,13 +170,12 @@ export async function action({ request, context }: { request: Request; context: 
     const result = await upsertRsvp({
       db,
       eventId,
-      userId: user.id as number,
+      userId: user.id,
       status: rsvpStatus,
       updatedViaCalendar: true,
     });
     console.log(`${result === 'created' ? 'Created' : 'Updated'} RSVP from email webhook`, {
       eventId,
-      userId: user.id,
       status: rsvpStatus,
     });
 
@@ -164,24 +190,25 @@ export async function action({ request, context }: { request: Request; context: 
     });
 
   } catch (error) {
-    console.error('Email webhook error:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('Email webhook error', { message });
     return Response.json(
       {
         success: false,
         error: 'Failed to process email webhook',
-        message: error instanceof Error ? error.message : String(error)
+        message: error instanceof Error ? error.message : String(error),
       },
       { status: 500 }
     );
   }
 }
 
-async function resolveCanonicalEventId(db: any, eventId: number): Promise<number> {
+async function resolveCanonicalEventId(db: AppLoadContext["cloudflare"]["env"]["DB"], eventId: number): Promise<number> {
   try {
     const alias = await db
       .prepare('SELECT canonical_event_id FROM event_aliases WHERE alias_event_id = ?')
       .bind(eventId)
-      .first();
+      .first() as EventAliasRow | null;
 
     if (alias?.canonical_event_id) {
       return Number(alias.canonical_event_id);
@@ -191,7 +218,7 @@ async function resolveCanonicalEventId(db: any, eventId: number): Promise<number
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.toLowerCase().includes('no such table')) {
-      console.error('Failed to resolve event alias:', error);
+      console.error('Failed to resolve event alias', { message });
     }
     return eventId;
   }

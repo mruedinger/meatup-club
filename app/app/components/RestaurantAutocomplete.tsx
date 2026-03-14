@@ -6,6 +6,10 @@ interface Place {
   formattedAddress: string;
 }
 
+interface PlaceSearchResponse {
+  places?: Place[];
+}
+
 interface PlaceDetails {
   placeId: string;
   name: string;
@@ -21,12 +25,14 @@ interface PlaceDetails {
 }
 
 interface RestaurantAutocompleteProps {
+  inputId?: string;
   onSelect: (placeDetails: PlaceDetails) => void;
   value: string;
   onChange: (value: string) => void;
 }
 
 export function RestaurantAutocomplete({
+  inputId,
   onSelect,
   value,
   onChange,
@@ -69,7 +75,7 @@ export function RestaurantAutocomplete({
         const response = await fetch(
           `/api/places/search?input=${encodeURIComponent(value)}`
         );
-        const data = (await response.json()) as any;
+        const data = (await response.json()) as PlaceSearchResponse;
         setSuggestions(data.places || []);
         setShowDropdown(true);
       } catch (error) {
@@ -128,6 +134,7 @@ export function RestaurantAutocomplete({
   return (
     <div ref={wrapperRef} className="relative">
       <input
+        id={inputId}
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}

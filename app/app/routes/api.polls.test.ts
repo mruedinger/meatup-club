@@ -17,6 +17,7 @@ type MockDbOptions = {
   closeChanges?: number;
   eventId?: number;
   failOn?: "insert_event" | "close_update" | null;
+  failOnRawTransactions?: boolean;
 };
 
 function createMockDb({
@@ -30,12 +31,14 @@ function createMockDb({
   closeChanges = 1,
   eventId = 222,
   failOn = null,
+  failOnRawTransactions = false,
 }: MockDbOptions = {}) {
   const runCalls: Array<{ sql: string; bindArgs: unknown[] }> = [];
   const pollQueue = [...pollByIdResponses];
 
   const prepare = vi.fn((sql: string) => {
     const normalizedSql = sql.replace(/\s+/g, " ").trim();
+    const isSelectStatement = normalizedSql.startsWith("SELECT");
 
     const firstForArgs = async (_bindArgs: unknown[]) => {
       if (normalizedSql.includes("SELECT * FROM polls WHERE status = 'active'")) {
@@ -65,20 +68,25 @@ function createMockDb({
       throw new Error(`Unexpected first() query: ${normalizedSql}`);
     };
 
+    const allForArgs = async (_bindArgs: unknown[]) => {
+      if (normalizedSql === "SELECT created_event_id FROM polls WHERE id = ?") {
+        return { results: [{ created_event_id: eventId }] };
+      }
+
+      return { results: [] };
+    };
+
     const runForArgs = async (bindArgs: unknown[]) => {
+      if (
+        failOnRawTransactions &&
+        (normalizedSql === "BEGIN TRANSACTION" ||
+          normalizedSql === "COMMIT" ||
+          normalizedSql === "ROLLBACK")
+      ) {
+        throw new Error("D1 does not support raw SQL transactions");
+      }
+
       runCalls.push({ sql: normalizedSql, bindArgs });
-
-      if (normalizedSql === "BEGIN TRANSACTION") {
-        return { meta: { changes: 0 } };
-      }
-
-      if (normalizedSql === "COMMIT") {
-        return { meta: { changes: 0 } };
-      }
-
-      if (normalizedSql === "ROLLBACK") {
-        return { meta: { changes: 0 } };
-      }
 
       if (normalizedSql.includes("INSERT INTO polls")) {
         return { meta: { last_row_id: createdPollId } };
@@ -89,7 +97,7 @@ function createMockDb({
           throw new Error("event insert failed");
         }
 
-        return { meta: { last_row_id: eventId } };
+        return { meta: { changes: 1, last_row_id: eventId } };
       }
 
       if (normalizedSql.includes("UPDATE polls") && normalizedSql.includes("WHERE id = ? AND status = 'active'")) {
@@ -105,15 +113,45 @@ function createMockDb({
 
     return {
       first: () => firstForArgs([]),
-      run: () => runForArgs([]),
+      all: () => allForArgs([]),
+      ...(isSelectStatement ? {} : { run: () => runForArgs([]) }),
       bind: (...bindArgs: unknown[]) => ({
         first: () => firstForArgs(bindArgs),
-        run: () => runForArgs(bindArgs),
+        all: () => allForArgs(bindArgs),
+        ...(isSelectStatement ? {} : { run: () => runForArgs(bindArgs) }),
       }),
     };
   });
 
-  return { prepare, runCalls };
+  const batch = vi.fn(async (statements: Array<{
+    run?: () => Promise<unknown>;
+    all?: () => Promise<unknown>;
+  }>) => {
+    const results = [];
+
+    for (const [index, statement] of statements.entries()) {
+      if (index === statements.length - 1 && typeof statement.all === "function") {
+        results.push(await statement.all());
+        continue;
+      }
+
+      if (typeof statement.run === "function") {
+        results.push(await statement.run());
+        continue;
+      }
+
+      if (typeof statement.all === "function") {
+        results.push(await statement.all());
+        continue;
+      }
+
+      results.push({});
+    }
+
+    return results;
+  });
+
+  return { prepare, runCalls, batch };
 }
 
 function createRequest(formEntries?: Record<string, string>) {
@@ -280,7 +318,7 @@ describe("api.polls route", () => {
     });
   });
 
-  it("creates an event inside a transaction when closing a poll", async () => {
+  it("creates an event through D1 batch statements when closing a poll", async () => {
     vi.mocked(requireActiveUser).mockResolvedValue({
       id: 99,
       is_admin: 1,
@@ -288,6 +326,7 @@ describe("api.polls route", () => {
       email: "admin@example.com",
     } as never);
     const db = createMockDb({
+      failOnRawTransactions: true,
       pollByIdResponses: [
         {
           id: 1,
@@ -322,21 +361,23 @@ describe("api.polls route", () => {
       },
       eventId: 333,
     });
+    expect(db.batch).toHaveBeenCalledTimes(1);
     expect(db.runCalls).toEqual([
-      expect.objectContaining({ sql: "BEGIN TRANSACTION", bindArgs: [] }),
       expect.objectContaining({
-        sql: "INSERT INTO events (restaurant_name, restaurant_address, event_date, status) VALUES (?, ?, ?, 'upcoming')",
-        bindArgs: ["Steak House", "123 Main", "2026-05-01"],
+        sql: expect.stringContaining("INSERT INTO events"),
+        bindArgs: ["Steak House", "123 Main", "2026-05-01", "18:00", "upcoming", 99, 1],
       }),
       expect.objectContaining({
-        sql: "UPDATE polls SET status = 'closed', closed_by = ?, closed_at = CURRENT_TIMESTAMP, winning_restaurant_id = ?, winning_date_id = ?, created_event_id = ? WHERE id = ? AND status = 'active'",
-        bindArgs: [99, 9, 17, 333, 1],
+        sql: "UPDATE polls SET status = 'closed', closed_by = ?, closed_at = CURRENT_TIMESTAMP, winning_restaurant_id = ?, winning_date_id = ?, created_event_id = last_insert_rowid() WHERE id = ? AND status = 'active'",
+        bindArgs: [99, 9, 17, 1],
       }),
-      expect.objectContaining({ sql: "COMMIT", bindArgs: [] }),
     ]);
+    expect(db.runCalls).not.toContainEqual(
+      expect.objectContaining({ sql: "BEGIN TRANSACTION" })
+    );
   });
 
-  it("rolls back and returns a server error when transactional close fails", async () => {
+  it("returns a server error when batch-based event close cannot claim the poll", async () => {
     vi.mocked(requireActiveUser).mockResolvedValue({
       id: 99,
       is_admin: 1,
@@ -364,9 +405,14 @@ describe("api.polls route", () => {
     expect(await response.json()).toEqual({ error: "Failed to close poll" });
     expect(db.runCalls).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ sql: "BEGIN TRANSACTION", bindArgs: [] }),
-        expect.objectContaining({ sql: "ROLLBACK", bindArgs: [] }),
+        expect.objectContaining({
+          sql: "UPDATE polls SET status = 'closed', closed_by = ?, closed_at = CURRENT_TIMESTAMP, winning_restaurant_id = ?, winning_date_id = ?, created_event_id = last_insert_rowid() WHERE id = ? AND status = 'active'",
+          bindArgs: [99, 9, 17, 1],
+        }),
       ])
+    );
+    expect(db.runCalls).not.toContainEqual(
+      expect.objectContaining({ sql: "ROLLBACK" })
     );
   });
 
