@@ -65,6 +65,11 @@ describe('Route Exports Smoke - Structural Route Checks', () => {
       const route = await import('../app/routes/privacy');
       expect(route.default).toBeDefined();
     });
+
+    it('/verification should load (public business verification page)', async () => {
+      const route = await import('../app/routes/verification');
+      expect(route.default).toBeDefined();
+    });
   });
 
   describe('Auth Routes', () => {
