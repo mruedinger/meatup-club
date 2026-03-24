@@ -121,10 +121,30 @@ body {
   animation: fade-in-up 0.6s ease-out both;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .steak-landing-content,
+  .steak-button,
+  .steak-emoji,
+  .steak-landing-text {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .steak-button:hover,
+  .steak-button:active,
+  .steak-button:focus-visible {
+    transform: none;
+  }
+
+  .steak-button:hover .steak-emoji,
+  .steak-button:active .steak-emoji {
+    filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.3));
+  }
+}
+
 .steak-button {
   display: block;
   cursor: pointer;
-  outline: none;
   background: none;
   border: none;
   padding: 1rem;
@@ -134,7 +154,13 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-.steak-button:hover {
+.steak-button:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 6px;
+}
+
+.steak-button:hover,
+.steak-button:focus-visible {
   transform: scale(1.08);
 }
 
